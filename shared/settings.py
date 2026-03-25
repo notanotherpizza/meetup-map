@@ -1,11 +1,3 @@
-"""
-shared/settings.py
-──────────────────
-Single source of truth for all configuration.
-Reads from environment variables or a .env file.
-All components import from here — nothing reads os.environ directly.
-"""
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,16 +23,19 @@ class Settings(BaseSettings):
     topic_events_raw: str = "events-raw"
 
     # ── Scraping ──────────────────────────────────────────────────────────────
-    pro_networks: list[str] = Field(default=["pydata"])
+    pro_networks_str: str = "pydata"
     max_events_per_group: int = 50
     request_delay_seconds: float = 1.5
     playwright_fallback: bool = True
+
+    @property
+    def pro_networks(self) -> list[str]:
+        return [n.strip() for n in self.pro_networks_str.replace(",", " ").split()]
 
     @classmethod
     def from_env(cls) -> "Settings":
         return cls()  # type: ignore[call-arg]
 
-    # Convenience: build the confluent-kafka producer/consumer config dict
     def kafka_ssl_config(self) -> dict:
         return {
             "bootstrap.servers": self.kafka_bootstrap_servers,

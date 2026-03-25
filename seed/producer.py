@@ -3,23 +3,13 @@ seed/producer.py
 ────────────────
 Seed producer: reads every group from one or more Meetup Pro networks
 and publishes a GroupSeed message to `groups-to-scrape` for each one.
-
-Run once to bootstrap, or on a cron to pick up newly created groups.
-Already-known groups will be re-queued (workers should upsert, not insert).
-
-Usage:
-    python -m seed.producer
-    # or after pip install -e .
-    meetupmap-seed
 """
 import asyncio
 import logging
 import sys
 from datetime import datetime, timezone
-from typing import AsyncIterator
 
 import httpx
-from playwright.async_api import async_playwright, Browser, Page
 
 from shared.kafka_client import ensure_topics, make_producer, publish
 from shared.models import GroupSeed
@@ -31,200 +21,105 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+MEETUP_GQL_URL = "https://www.meetup.com/gql2"
 
-# ── Meetup GraphQL ────────────────────────────────────────────────────────────
-# Meetup exposes a public GraphQL endpoint. The pro network member list
-# is paginated via a cursor. This works without authentication for public
-# pro networks like pydata.
-
-MEETUP_GQL_URL = "https://www.meetup.com/gql"
-
-PRO_NETWORK_QUERY = """
-query ProNetworkGroups($urlname: String!, $cursor: String) {
-  proNetworkByUrlname(urlname: $urlname) {
-    groupsSearch(input: { first: 100, after: $cursor }) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      edges {
-        node {
-          id
-          urlname
-          name
-          city
-          country
-          lat
-          lon
-          memberships {
-            count
-          }
-          link
-        }
-      }
-    }
-  }
-}
-"""
+# Persisted query hash for getProNetworkGroupsGeoByUrlname
+# Captured from browser network traffic — fetches up to 500 groups in one call
+GEO_GROUPS_HASH = "08215939115765485ea3c349d1b041f5584a07c0fba497583b8c4f123b468d0a"
 
 
-async def fetch_groups_via_api(
-    network: str,
-    client: httpx.AsyncClient,
-    delay: float,
-) -> AsyncIterator[dict]:
+async def fetch_groups(network: str, client: httpx.AsyncClient) -> list[dict]:
     """
-    Walk the GraphQL pagination cursor and yield raw group dicts.
-    Raises httpx.HTTPError on non-2xx — caller decides whether to fallback.
+    Fetch all groups for a pro network using Meetup's persisted GraphQL query.
+    Returns a list of group dicts with urlname, name, lat, lon, city, country.
     """
-    cursor = None
-    page = 0
-
-    while True:
-        page += 1
-        log.info("[%s] Fetching page %d via API (cursor: %s)", network, page, cursor)
-
-        resp = await client.post(
-            MEETUP_GQL_URL,
-            json={
-                "query": PRO_NETWORK_QUERY,
-                "variables": {"urlname": network, "cursor": cursor},
+    resp = await client.post(
+        MEETUP_GQL_URL,
+        json={
+            "operationName": "getProNetworkGroupsGeoByUrlname",
+            "variables": {
+                "urlname": network,
+                "first": 500,
+                "active": True,
             },
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                # Meetup's GQL endpoint is public but politely identify ourselves
-                "User-Agent": "meetupmap-seed/0.1 (https://github.com/yourusername/meetupmap)",
+            "extensions": {
+                "persistedQuery": {
+                    "version": 1,
+                    "sha256Hash": GEO_GROUPS_HASH,
+                }
             },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        if "errors" in data:
-            raise ValueError(f"GraphQL errors: {data['errors']}")
-
-        network_data = data.get("data", {}).get("proNetworkByUrlname")
-        if not network_data:
-            raise ValueError(f"No proNetworkByUrlname in response for '{network}'")
-
-        search = network_data["groupsSearch"]
-        edges = search.get("edges", [])
-
-        for edge in edges:
-            yield edge["node"]
-
-        page_info = search.get("pageInfo", {})
-        if not page_info.get("hasNextPage"):
-            break
-
-        cursor = page_info["endCursor"]
-        await asyncio.sleep(delay)
-
-
-# ── Playwright fallback ───────────────────────────────────────────────────────
-
-async def fetch_groups_via_playwright(
-    network: str,
-    browser: Browser,
-    delay: float,
-) -> AsyncIterator[dict]:
-    """
-    Fallback: use Playwright to scrape the Pro network page.
-    Meetup renders group cards in JS, so we wait for them to appear.
-    Yields minimal dicts (urlname + link only) — the worker will enrich.
-    """
-    url = f"https://www.meetup.com/pro/{network}/"
-    log.info("[%s] Falling back to Playwright at %s", network, url)
-
-    page: Page = await browser.new_page()
-    await page.goto(url, wait_until="networkidle", timeout=60_000)
-
-    # Meetup pro pages list groups as anchor tags with the group URL
-    # The selector may need updating if Meetup changes their markup.
-    # Inspect meetup.com/pro/pydata/ → look for group card links.
-    group_links = await page.eval_on_selector_all(
-        "a[href*='meetup.com/']",
-        """els => els
-            .map(a => a.href)
-            .filter(h => /meetup\\.com\\/[\\w-]+\\/?$/.test(h))
-            .filter((v, i, arr) => arr.indexOf(v) === i)
-        """,
+        },
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; meetupmap-seed/0.1)",
+        },
     )
+    resp.raise_for_status()
+    data = resp.json()
 
-    log.info("[%s] Playwright found %d candidate links", network, len(group_links))
+    if "errors" in data:
+        raise ValueError(f"GraphQL errors: {data['errors']}")
 
-    for link in group_links:
-        # Extract urlname from URL: https://www.meetup.com/pydata-london/ → pydata-london
-        urlname = link.rstrip("/").split("/")[-1]
-        if urlname in ("pro", network, "meetup.com", ""):
-            continue
-        yield {"urlname": urlname, "link": link}
-        await asyncio.sleep(delay)
+    # Log the top-level keys so we can see the response shape
+    log.info("Response keys: %s", list(data.get("data", {}).keys()))
 
-    await page.close()
+    # Navigate to the groups list — adjust path based on actual response
+    network_data = data.get("data", {})
+    
+    # Try common paths
+    for path in [
+        ["proNetwork", "groupsSearch", "edges"],
+        ["proNetworkByUrlname", "groups", "edges"],
+        ["proNetworkByUrlname", "groups"],
+    ]:
+        obj = network_data
+        for key in path:
+            obj = obj.get(key, {}) if isinstance(obj, dict) else None
+            if obj is None:
+                break
+        if obj and isinstance(obj, list):
+            log.info("Found %d groups at path: %s", len(obj), path)
+            return obj
 
+    log.warning("Could not find groups list. Full response: %s", str(data)[:1000])
+    return []
 
-# ── Core logic ────────────────────────────────────────────────────────────────
 
 async def seed_network(
     network: str,
     settings: Settings,
     producer,
-    browser: Browser | None,
 ) -> int:
-    """
-    Fetch all groups for one pro network and publish GroupSeed messages.
-    Returns the number of groups published.
-    """
-    published = 0
     now = datetime.now(timezone.utc)
+    published = 0
 
     async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            async for group in fetch_groups_via_api(network, client, settings.request_delay_seconds):
-                seed = GroupSeed(
-                    group_urlname=group["urlname"],
-                    group_url=group.get("link") or f"https://www.meetup.com/{group['urlname']}/",
-                    pro_network=network,
-                    seeded_at=now,
-                )
-                publish(
-                    producer,
-                    topic=settings.topic_groups_to_scrape,
-                    value=seed.model_dump(mode="json"),
-                    key=seed.group_urlname,  # partition by group so msgs are ordered
-                )
-                published += 1
-                log.info("[%s] Seeded: %s (%d so far)", network, seed.group_urlname, published)
+        raw_groups = await fetch_groups(network, client)
 
-            log.info("[%s] API seed complete: %d groups", network, published)
-            return published
+        for item in raw_groups:
+            # Handle both edge-wrapped and direct group objects
+            group = item.get("node", item) if isinstance(item, dict) else item
 
-        except Exception as exc:
-            log.warning("[%s] API failed (%s), trying Playwright fallback", network, exc)
+            urlname = group.get("urlname") or group.get("link", "").rstrip("/").split("/")[-1] or group.get("id", "")
+            if not urlname:
+                continue
 
-            if not settings.playwright_fallback or browser is None:
-                log.error("[%s] Playwright fallback disabled or unavailable. Giving up.", network)
-                raise
+            seed = GroupSeed(
+                group_urlname=urlname,
+                group_url=group.get("link") or f"https://www.meetup.com/{urlname}/",
+                pro_network=network,
+                seeded_at=now,
+            )
+            publish(
+                producer,
+                topic=settings.topic_groups_to_scrape,
+                value=seed.model_dump(mode="json"),
+                key=urlname,
+            )
+            published += 1
+            log.info("[%s] Seeded: %s (%d so far)", network, urlname, published)
 
-    # Playwright fallback (outside httpx context — no need for it)
-    async for group in fetch_groups_via_playwright(network, browser, settings.request_delay_seconds):
-        seed = GroupSeed(
-            group_urlname=group["urlname"],
-            group_url=group["link"],
-            pro_network=network,
-            seeded_at=now,
-        )
-        publish(
-            producer,
-            topic=settings.topic_groups_to_scrape,
-            value=seed.model_dump(mode="json"),
-            key=seed.group_urlname,
-        )
-        published += 1
-        log.info("[%s] Seeded (playwright): %s (%d so far)", network, seed.group_urlname, published)
-
-    log.info("[%s] Playwright seed complete: %d groups", network, published)
     return published
 
 
@@ -237,31 +132,19 @@ async def run(settings: Settings) -> None:
             settings.topic_groups_raw,
             settings.topic_events_raw,
         ],
-        num_partitions=6,
+        num_partitions=2,
     )
 
     producer = make_producer(settings)
 
-    # Only start Playwright if fallback is enabled
-    playwright_ctx = async_playwright() if settings.playwright_fallback else None
-    playwright = await playwright_ctx.start() if playwright_ctx else None
-    browser = await playwright.chromium.launch(headless=True) if playwright else None
+    total = 0
+    for network in settings.pro_networks:
+        count = await seed_network(network, settings, producer)
+        total += count
 
-    try:
-        total = 0
-        for network in settings.pro_networks:
-            count = await seed_network(network, settings, producer, browser)
-            total += count
-
-        log.info("Flushing producer (waiting for all deliveries)…")
-        producer.flush(timeout=30)
-        log.info("Seed complete. Total groups published: %d", total)
-
-    finally:
-        if browser:
-            await browser.close()
-        if playwright:
-            await playwright.stop()
+    log.info("Flushing producer…")
+    producer.flush(timeout=30)
+    log.info("Seed complete. Total groups published: %d", total)
 
 
 def main() -> None:

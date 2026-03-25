@@ -1,0 +1,51 @@
+# .github/workflows/render-map.yml
+# Renders the Meetup map from Postgres data and publishes to GitHub Pages.
+# Triggers: on push to main, on a daily schedule, or manually.
+
+name: Render map
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'map/**'
+  schedule:
+    - cron: '0 6 * * *'   # daily at 6am UTC, after overnight scrapes
+
+# Required for GitHub Pages deployment
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Render map
+        env:
+          POSTGRES_URI: ${{ secrets.POSTGRES_URI }}
+          # Kafka vars needed for Settings to load — not actually used by render
+          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
+          KAFKA_SSL_CA_FILE: /dev/null
+          KAFKA_SSL_CERT_FILE: /dev/null
+          KAFKA_SSL_KEY_FILE: /dev/null
+        run: python -m map.render
+
+      - name: Commit and push docs/index.html
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --staged --quiet || git commit -m "chore: render map $(date -u +%Y-%m-%d)"
+          git push

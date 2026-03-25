@@ -6,3 +6,5 @@ infra/terraform/terraform.tfvars
 certs/*
 __pycache__/
 *.pyc
+__pycache__/
+*.pyc

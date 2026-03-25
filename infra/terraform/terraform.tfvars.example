@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (git-ignored) and fill in your token.
+# Get your token: console.aiven.io → top-right avatar → Tokens → Generate token
+
+aiven_api_token = "your-aiven-api-token-here"
+aiven_project   = "hugh-one"
+cloud_name      = "aws-eu-west-2"

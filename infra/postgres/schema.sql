@@ -37,6 +37,17 @@ CREATE TABLE IF NOT EXISTS events (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Geocoding cache — shared across all workers, keyed by "city, Country Name".
+-- Workers write here after a Nominatim lookup so subsequent workers and runs
+-- get an instant Postgres hit instead of calling Nominatim again.
+CREATE TABLE IF NOT EXISTS geocode_cache (
+    query             TEXT        PRIMARY KEY,  -- e.g. "London, United Kingdom"
+    lat               DOUBLE PRECISION,         -- null = confirmed miss (city not found)
+    lon               DOUBLE PRECISION,
+    display_name      TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Keep updated_at fresh automatically
 CREATE OR REPLACE FUNCTION touch_updated_at()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
@@ -58,8 +69,8 @@ DO $$ BEGIN
         FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Useful indexes
-CREATE INDEX IF NOT EXISTS events_group_id_idx   ON events (group_id);
-CREATE INDEX IF NOT EXISTS events_starts_at_idx  ON events (starts_at DESC);
-CREATE INDEX IF NOT EXISTS events_status_idx     ON events (status);
+-- Indexes
+CREATE INDEX IF NOT EXISTS events_group_id_idx    ON events (group_id);
+CREATE INDEX IF NOT EXISTS events_starts_at_idx   ON events (starts_at DESC);
+CREATE INDEX IF NOT EXISTS events_status_idx      ON events (status);
 CREATE INDEX IF NOT EXISTS groups_pro_network_idx ON groups (pro_network);

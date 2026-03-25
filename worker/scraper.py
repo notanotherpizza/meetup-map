@@ -1,12 +1,11 @@
 """
 worker/scraper.py
 ─────────────────
-Worker: consumes GroupSeed messages from `groups-to-scrape`, fetches group
-metadata and events from Meetup's gql2 API, and publishes GroupRaw and
-EventRaw messages to their respective topics.
+Stateless worker: consumes GroupSeed messages, calls three Meetup gql2
+endpoints per group (groupHome, getPastGroupEvents, getUpcomingGroupEvents),
+geocodes via Postgres cache, and publishes GroupRaw + EventRaw messages.
 
-Run one or more workers — they share a consumer group so work is distributed
-automatically across however many instances are running.
+Multiple workers run in parallel — all state lives in Postgres/Kafka.
 
 Usage:
     python -m worker.scraper
@@ -18,7 +17,9 @@ import sys
 from datetime import datetime, timezone
 
 import httpx
+import psycopg
 
+from shared.geocoding import COUNTRY_CODE_TO_NAME, NOMINATIM_URL, NOMINATIM_DELAY
 from shared.kafka_client import make_consumer, make_producer, publish
 from shared.models import EventRaw, GroupRaw, GroupSeed
 from shared.settings import Settings
@@ -31,9 +32,9 @@ log = logging.getLogger(__name__)
 
 MEETUP_GQL_URL = "https://www.meetup.com/gql2"
 
+GROUP_HOME_HASH      = "012d7194e1b3746c687a04e05cdf39a25e33a7f8228bb3c563ee55432c718bee"
 PAST_EVENTS_HASH     = "321388b1e4a11b17a57efe3ae7a90abfecbc703a4f4e99519772294924c21351"
 UPCOMING_EVENTS_HASH = "066e3709c68718d5ce9dd909e979ac70f99835fb3722cef77756ded808d5ca08"
-GEO_GROUPS_HASH      = "08215939115765485ea3c349d1b041f5584a07c0fba497583b8c4f123b468d0a"
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -42,14 +43,15 @@ HEADERS = {
 }
 
 
-async def gql(client, operation, variables, hash):
-    now = datetime.now(timezone.utc).isoformat()
+# ── Meetup API ────────────────────────────────────────────────────────────────
+
+async def gql(client, operation, variables, hash_):
     resp = await client.post(
         MEETUP_GQL_URL,
         json={
             "operationName": operation,
             "variables": variables,
-            "extensions": {"persistedQuery": {"version": 1, "sha256Hash": hash}},
+            "extensions": {"persistedQuery": {"version": 1, "sha256Hash": hash_}},
         },
         headers=HEADERS,
     )
@@ -60,9 +62,30 @@ async def gql(client, operation, variables, hash):
     return data
 
 
-async def fetch_events(urlname, client, max_events):
+async def fetch_group_home(urlname: str, client: httpx.AsyncClient) -> dict:
+    """
+    Per-group metadata: member count, city, country, lat, lon, event counts.
+    Uses the groupHome persisted query — same query Meetup fires on group pages.
+    Returns {} on failure so callers fall back to seed data.
+    """
+    try:
+        data = await gql(client, "groupHome",
+                         {"urlname": urlname, "includePrivateInfo": False},
+                         GROUP_HOME_HASH)
+        return data.get("data", {}).get("groupByUrlname", {}) or {}
+    except Exception as exc:
+        log.warning("  groupHome failed for %s: %s", urlname, exc)
+        return {}
+
+
+async def fetch_events(
+    urlname: str,
+    client: httpx.AsyncClient,
+    max_events: int,
+) -> tuple[list[dict], list[dict]]:
     now = datetime.now(timezone.utc).isoformat()
-    past, upcoming = [], []
+    past: list[dict] = []
+    upcoming: list[dict] = []
 
     cursor = None
     while len(past) < max_events:
@@ -80,58 +103,147 @@ async def fetch_events(urlname, client, max_events):
 
     data = await gql(client, "getUpcomingGroupEvents",
                      {"urlname": urlname, "afterDateTime": now}, UPCOMING_EVENTS_HASH)
-    edges = (data.get("data", {}).get("groupByUrlname", {})
-                 .get("events", {}).get("edges", []))
+    edges = (data.get("data", {})
+                 .get("groupByUrlname", {})
+                 .get("events", {})
+                 .get("edges", []))
     upcoming.extend(edge["node"] for edge in edges if "node" in edge)
 
     return past[:max_events], upcoming
 
 
-async def fetch_group_meta(urlname, client):
-    data = await gql(client, "getProNetworkGroupsGeoByUrlname",
-                     {"urlname": "pydata", "first": 500, "active": True}, GEO_GROUPS_HASH)
-    edges = (data.get("data", {}).get("proNetwork", {})
-                 .get("groupsSearch", {}).get("edges", []))
-    for edge in edges:
-        node = edge.get("node", {})
-        if node.get("link", "").rstrip("/").split("/")[-1].lower() == urlname.lower():
-            return node
-    return {}
+# ── Geocoding via Postgres ────────────────────────────────────────────────────
+
+def _geocode_query(city: str | None, country: str | None) -> str | None:
+    if not city:
+        return None
+    if country:
+        country_name = COUNTRY_CODE_TO_NAME.get(country.lower(), country.upper())
+        return f"{city}, {country_name}"
+    return city
 
 
-def build_group_raw(seed, meta):
-    memberships = meta.get("memberships")
+def _is_high_precision(lat, lon) -> bool:
+    if lat is None or lon is None:
+        return False
+    lat_dp = len(str(abs(lat)).split(".")[-1]) if "." in str(lat) else 0
+    lon_dp = len(str(abs(lon)).split(".")[-1]) if "." in str(lon) else 0
+    return lat_dp > 2 or lon_dp > 2
+
+
+def resolve_coords(seed: GroupSeed, pg: psycopg.Connection) -> tuple:
+    """
+    Three-level coordinate resolution — all state in Postgres:
+    1. groups table: group already has geocoded coords from a previous run
+    2. geocode_cache table: city already geocoded for another group
+    3. Nominatim API: genuine miss — write result back to geocode_cache
+    """
+    # Level 1: existing high-precision coords for this group
+    with pg.cursor() as cur:
+        cur.execute("SELECT lat, lon FROM groups WHERE id = %s", (seed.group_urlname,))
+        row = cur.fetchone()
+        if row and _is_high_precision(row[0], row[1]):
+            log.debug("  L1 coords (groups): %s", seed.group_urlname)
+            return row[0], row[1]
+
+    # Level 2: city already in geocode_cache
+    query = _geocode_query(seed.city, seed.country)
+    if query:
+        with pg.cursor() as cur:
+            cur.execute("SELECT lat, lon FROM geocode_cache WHERE query = %s", (query,))
+            row = cur.fetchone()
+            if row is not None:
+                log.debug("  L2 coords (geocode_cache): %s", query)
+                return row[0], row[1]
+
+    if not query:
+        return seed.lat, seed.lon
+
+    # Level 3: Nominatim
+    import time
+    try:
+        resp = httpx.get(
+            NOMINATIM_URL,
+            params={"q": query, "format": "json", "limit": 1, "featuretype": "city"},
+            headers={"User-Agent": "meetupmap/0.1 (github.com/notanotherpizza/meetup-map)"},
+            timeout=10,
+        )
+        results = resp.json()
+        time.sleep(NOMINATIM_DELAY)
+
+        if results:
+            lat = float(results[0]["lat"])
+            lon = float(results[0]["lon"])
+            display = results[0].get("display_name", "")
+            log.info("  L3 Nominatim: %s → (%.4f, %.4f)", query, lat, lon)
+        else:
+            lat = lon = None
+            display = None
+            log.warning("  L3 Nominatim miss: %s", query)
+
+        with pg.cursor() as cur:
+            cur.execute(
+                "INSERT INTO geocode_cache (query, lat, lon, display_name) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (query) DO NOTHING",
+                (query, lat, lon, display),
+            )
+        pg.commit()
+        return lat or seed.lat, lon or seed.lon
+
+    except Exception as exc:
+        log.warning("  Nominatim error for %s: %s", query, exc)
+        return seed.lat, seed.lon
+
+
+# ── Message builders ──────────────────────────────────────────────────────────
+
+def build_group_raw(
+    seed: GroupSeed,
+    group_home: dict,
+    lat: float | None,
+    lon: float | None,
+) -> GroupRaw:
+    member_count = (
+        (group_home.get("stats") or {})
+        .get("memberCounts", {})
+        .get("all")
+    )
     return GroupRaw(
         group_urlname=seed.group_urlname,
-        name=meta.get("name", seed.group_urlname),
+        name=seed.name or seed.group_urlname,
         pro_network=seed.pro_network,
-        city=meta.get("city"),
-        country=meta.get("country"),
-        lat=meta.get("lat"),
-        lon=meta.get("lon"),
-        member_count=memberships.get("count") if isinstance(memberships, dict) else None,
-        meetup_url=meta.get("link", seed.group_url),
+        city=seed.city,
+        country=seed.country,
+        lat=lat,
+        lon=lon,
+        member_count=member_count,
+        meetup_url=seed.group_url,
         scraped_at=datetime.now(timezone.utc),
         scrape_method="gql2",
     )
 
 
-def build_event_raw(seed, event, status):
+def build_event_raw(seed: GroupSeed, event: dict, status: str) -> EventRaw | None:
     event_id = str(event.get("id", ""))
     if not event_id:
         return None
+
     starts_at = None
     if "dateTime" in event:
         try:
             starts_at = datetime.fromisoformat(event["dateTime"])
         except Exception:
             pass
+
     venue = event.get("venue") or {}
-    is_online = (event.get("isOnline", False)
-                 or event.get("venueType") == "ONLINE"
-                 or "online" in (venue.get("name") or "").lower())
+    is_online = (
+        event.get("isOnline", False)
+        or event.get("venueType") == "ONLINE"
+        or "online" in (venue.get("name") or "").lower()
+    )
     going = event.get("going") or {}
     rsvp_count = going.get("totalCount") if isinstance(going, dict) else None
+
     return EventRaw(
         event_id=event_id,
         group_urlname=seed.group_urlname,
@@ -150,24 +262,37 @@ def build_event_raw(seed, event, status):
     )
 
 
-async def process_seed(seed, producer, settings, client):
+# ── Core processing ───────────────────────────────────────────────────────────
+
+async def process_seed(
+    seed: GroupSeed,
+    producer,
+    settings: Settings,
+    client: httpx.AsyncClient,
+    pg: psycopg.Connection,
+) -> None:
     log.info("Processing: %s", seed.group_urlname)
-    try:
-        past, upcoming = await fetch_events(seed.group_urlname, client, settings.max_events_per_group)
-    except Exception as exc:
-        log.error("  Events fetch failed for %s: %s", seed.group_urlname, exc)
-        past, upcoming = [], []
-    log.info("  → %d past, %d upcoming events", len(past), len(upcoming))
 
-    try:
-        meta = await fetch_group_meta(seed.group_urlname, client)
-    except Exception as exc:
-        log.warning("  Meta fetch failed for %s: %s", seed.group_urlname, exc)
-        meta = {}
+    # Fire groupHome and both event queries concurrently — 3 API calls in parallel
+    group_home, (past, upcoming) = await asyncio.gather(
+        fetch_group_home(seed.group_urlname, client),
+        fetch_events(seed.group_urlname, client, settings.max_events_per_group),
+    )
 
-    publish(producer, topic=settings.topic_groups_raw,
-            value=build_group_raw(seed, meta).model_dump(mode="json"),
-            key=seed.group_urlname)
+    log.info("  → %d past, %d upcoming events | members: %s",
+             len(past), len(upcoming),
+             (group_home.get("stats") or {}).get("memberCounts", {}).get("all", "?"))
+
+    # Geocode — Postgres-backed, no local state
+    lat, lon = resolve_coords(seed, pg)
+
+    # Publish
+    publish(
+        producer,
+        topic=settings.topic_groups_raw,
+        value=build_group_raw(seed, group_home, lat, lon).model_dump(mode="json"),
+        key=seed.group_urlname,
+    )
 
     published = 0
     for event in past:
@@ -188,36 +313,40 @@ async def process_seed(seed, producer, settings, client):
     log.info("  → Published 1 group + %d events for %s", published, seed.group_urlname)
 
 
-async def run(settings):
+# ── Consumer loop ─────────────────────────────────────────────────────────────
+
+async def run(settings: Settings) -> None:
     consumer = make_consumer(settings, group_id="meetupmap-workers",
                              topics=[settings.topic_groups_to_scrape])
     producer = make_producer(settings)
     log.info("Worker started. Listening on '%s'…", settings.topic_groups_to_scrape)
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            while True:
-                msg = consumer.poll(timeout=5.0)
-                if msg is None:
-                    continue
-                if msg.error():
-                    log.error("Kafka error: %s", msg.error())
-                    continue
-                try:
-                    seed = GroupSeed(**json.loads(msg.value()))
-                    await process_seed(seed, producer, settings, client)
-                    producer.flush(timeout=10)
-                    consumer.commit(msg)
-                    await asyncio.sleep(settings.request_delay_seconds)
-                except Exception as exc:
-                    log.error("Failed to process %s: %s", msg.key(), exc, exc_info=True)
-        except KeyboardInterrupt:
-            log.info("Shutting down…")
-        finally:
-            consumer.close()
+    with psycopg.connect(settings.postgres_uri) as pg:
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                while True:
+                    msg = consumer.poll(timeout=5.0)
+                    if msg is None:
+                        continue
+                    if msg.error():
+                        log.error("Kafka error: %s", msg.error())
+                        continue
+                    try:
+                        seed = GroupSeed(**json.loads(msg.value()))
+                        await process_seed(seed, producer, settings, client, pg)
+                        producer.flush(timeout=10)
+                        consumer.commit(msg)
+                        await asyncio.sleep(settings.request_delay_seconds)
+                    except Exception as exc:
+                        log.error("Failed to process %s: %s",
+                                  msg.key(), exc, exc_info=True)
+            except KeyboardInterrupt:
+                log.info("Shutting down…")
+            finally:
+                consumer.close()
 
 
-def main():
+def main() -> None:
     settings = Settings.from_env()
     try:
         asyncio.run(run(settings))

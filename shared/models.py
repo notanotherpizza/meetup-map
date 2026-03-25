@@ -2,26 +2,30 @@
 shared/models.py
 ────────────────
 Pydantic models for every message type that flows through Kafka.
-Using models here means:
-  - the seed producer, workers, and sink consumer all speak the same schema
-  - validation happens at produce-time, not just at consume-time
-  - easy to evolve the schema with Optional fields
 """
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 
 
 class GroupSeed(BaseModel):
     """
     Published to: groups-to-scrape
-    One message per group that needs scraping.
+    Carries all metadata available at seed time so workers are fully stateless —
+    they don't need to re-fetch group metadata from the Meetup API.
     """
-    group_urlname: str           # e.g. "PyData-London"
-    group_url: str               # e.g. "https://www.meetup.com/pydata-london/"
-    pro_network: str             # e.g. "pydata"
+    group_urlname: str
+    group_url: str
+    pro_network: str
     seeded_at: datetime
+    # Metadata from the seed API call — workers use these directly
+    name: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    lat: Optional[float] = None          # Meetup truncated coords (2dp)
+    lon: Optional[float] = None
+    member_count: Optional[int] = None
 
 
 class GroupRaw(BaseModel):
@@ -34,12 +38,12 @@ class GroupRaw(BaseModel):
     pro_network: str
     city: Optional[str] = None
     country: Optional[str] = None
-    lat: Optional[float] = None
+    lat: Optional[float] = None          # Nominatim-geocoded coords (4dp)
     lon: Optional[float] = None
     member_count: Optional[int] = None
     meetup_url: str
     scraped_at: datetime
-    scrape_method: str           # "api" or "playwright"
+    scrape_method: str
 
 
 class EventRaw(BaseModel):
@@ -47,12 +51,12 @@ class EventRaw(BaseModel):
     Published to: events-raw
     One message per event, published by a worker after scraping a group.
     """
-    event_id: str                # Meetup's own event ID
+    event_id: str
     group_urlname: str
     title: str
     description: Optional[str] = None
     event_url: str
-    status: str                  # "past" | "upcoming" | "cancelled"
+    status: str                          # "past" | "upcoming" | "cancelled"
     is_online: bool = False
     venue_name: Optional[str] = None
     venue_lat: Optional[float] = None

@@ -1,10 +1,19 @@
-infra/terraform/terraform.tfvarsinfra/terraform/.terraform/
+# Secrets and local config
+.env
+certs/
+
+# Terraform
+infra/terraform/.terraform/
 infra/terraform/.terraform.lock.hcl
 infra/terraform/terraform.tfstate
 infra/terraform/terraform.tfstate.backup
 infra/terraform/terraform.tfvars
-certs/*
+
+# Python
 __pycache__/
 *.pyc
-__pycache__/
-*.pyc
+*.egg-info/
+.venv/
+
+# Generated / local cache
+geocode_cache.json

@@ -1,0 +1,84 @@
+# .github/workflows/scrape.yml
+# Runs the full scrape pipeline: seed → worker → sink → render map.
+# Worker and sink both exit automatically when the topic is drained.
+#
+# Trigger manually from the Actions tab, or add a schedule.
+
+name: Scrape
+
+on:
+  workflow_dispatch:
+    inputs:
+      networks:
+        description: "Pro networks to scrape (space separated)"
+        default: "pydata"
+      max_events:
+        description: "Max past events per group"
+        default: "200"
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Write Kafka certs
+        run: |
+          mkdir -p certs
+          echo "${{ secrets.KAFKA_CA_PEM }}"       > certs/ca.pem
+          echo "${{ secrets.KAFKA_SERVICE_CERT }}" > certs/service.cert
+          echo "${{ secrets.KAFKA_SERVICE_KEY }}"  > certs/service.key
+          chmod 600 certs/*
+
+      - name: Seed
+        env:
+          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
+          POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
+          PRO_NETWORKS_STR:        ${{ github.event.inputs.networks }}
+        run: python -m seed.producer
+
+      - name: Scrape (worker + sink in parallel, both drain and exit)
+        env:
+          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
+          POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
+          PRO_NETWORKS_STR:        ${{ github.event.inputs.networks }}
+          MAX_EVENTS_PER_GROUP:    ${{ github.event.inputs.max_events }}
+          REQUEST_DELAY_SECONDS:   "1.5"
+          DRAIN_MODE:              "true"
+        run: |
+          python -m sink.consumer &
+          SINK_PID=$!
+
+          python -m worker.scraper
+          # Worker exits when topic is drained
+
+          # Give sink extra time to flush any remaining FK-retried events
+          wait $SINK_PID
+          echo "Pipeline complete."
+
+      - name: Render map
+        env:
+          POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
+          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
+        run: python -m map.render
+
+      - name: Commit map
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --staged --quiet || git commit -m "chore: scrape + render $(date -u +%Y-%m-%d)"
+          git push

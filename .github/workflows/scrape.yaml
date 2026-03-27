@@ -59,6 +59,7 @@ jobs:
           REQUEST_DELAY_SECONDS:   "1.5"
           DRAIN_MODE:              "true"
         run: |
+          sleep 10
           python -m worker.scraper &
           python -m worker.scraper &
           wait
@@ -73,6 +74,7 @@ jobs:
           REQUEST_DELAY_SECONDS:   "1.5"
           DRAIN_MODE:              "true"
         run: |
+          sleep 10
           python -m sink.consumer 
           wait
           echo "Pipeline complete."

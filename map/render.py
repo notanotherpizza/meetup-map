@@ -58,7 +58,7 @@ def fetch_groups(pg: psycopg.Connection) -> list[dict]:
 def fetch_networks(pg: psycopg.Connection) -> list[str]:
     with pg.cursor() as cur:
         cur.execute("SELECT DISTINCT pro_network FROM groups ORDER BY pro_network")
-        return [row[0] for row in cur.fetchall()]
+        return [row["pro_network"] for row in cur.fetchall()]
 
 
 def groups_to_js(groups: list[dict]) -> str:

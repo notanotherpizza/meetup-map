@@ -1,14 +1,16 @@
 """
 seed/producer.py
 ────────────────
-Lightweight seed producer: fetches the group list from the Meetup Pro
-network and publishes one GroupSeed per group. That's it.
+Lightweight seed producer: fetches group lists from one or more Meetup Pro
+networks and publishes one GroupSeed per group.
 
-All per-group enrichment (events, member counts, geocoding) is the
-worker's responsibility — workers scale horizontally, the producer doesn't.
+Networks can be specified via:
+  - PRO_NETWORKS_STR env var (space/comma separated) for explicit list
+  - PRO_NETWORKS_STR=ALL to scrape all known networks from seed/networks.py
 
 Usage:
     python -m seed.producer
+    PRO_NETWORKS_STR=ALL python -m seed.producer
 """
 import asyncio
 import logging
@@ -17,6 +19,7 @@ from datetime import datetime, timezone
 
 import httpx
 
+from seed.networks import PRO_NETWORKS
 from shared.kafka_client import ensure_topics, make_producer, publish
 from shared.models import GroupSeed
 from shared.settings import Settings
@@ -38,7 +41,7 @@ HEADERS = {
 
 
 async def fetch_groups(network: str, client: httpx.AsyncClient) -> list[dict]:
-    """Single API call — returns all groups with name, city, country, lat, lon."""
+    """Single API call — returns all groups for a pro network."""
     resp = await client.post(
         MEETUP_GQL_URL,
         json={
@@ -50,24 +53,52 @@ async def fetch_groups(network: str, client: httpx.AsyncClient) -> list[dict]:
     )
     resp.raise_for_status()
     data = resp.json()
+
     if "errors" in data:
         raise ValueError(f"GQL errors: {data['errors']}")
-    return (data.get("data", {}).get("proNetwork", {})
-                .get("groupsSearch", {}).get("edges", []))
+
+    # Check the network actually exists
+    if not data.get("data", {}).get("proNetwork"):
+        raise ValueError(f"No proNetwork found for '{network}'")
+
+    return (data.get("data", {})
+                .get("proNetwork", {})
+                .get("groupsSearch", {})
+                .get("edges", []))
 
 
-async def seed_network(network: str, settings: Settings, producer) -> int:
+async def seed_network(
+    network: str,
+    settings: Settings,
+    producer,
+    seen_urlnames: set[str],
+) -> int:
+    """
+    Seed one network. Returns number of new groups published.
+    seen_urlnames is shared across networks to avoid publishing duplicates
+    (a group can belong to multiple pro networks).
+    """
     now = datetime.now(timezone.utc)
     published = 0
 
     async with httpx.AsyncClient(timeout=30) as client:
-        edges = await fetch_groups(network, client)
+        try:
+            edges = await fetch_groups(network, client)
+        except Exception as exc:
+            log.warning("[%s] Skipping — %s", network, exc)
+            return 0
 
     for edge in edges:
         node = edge.get("node", {})
         urlname = node.get("link", "").rstrip("/").split("/")[-1]
         if not urlname:
             continue
+
+        # Skip if already published by a previous network in this run
+        if urlname.lower() in seen_urlnames:
+            log.debug("[%s] Skipping duplicate: %s", network, urlname)
+            continue
+        seen_urlnames.add(urlname.lower())
 
         seed = GroupSeed(
             group_urlname=urlname,
@@ -79,7 +110,6 @@ async def seed_network(network: str, settings: Settings, producer) -> int:
             country=node.get("country"),
             lat=node.get("lat"),
             lon=node.get("lon"),
-            # member_count not available from geo query — worker fetches this
         )
         publish(
             producer,
@@ -88,8 +118,9 @@ async def seed_network(network: str, settings: Settings, producer) -> int:
             key=seed.group_urlname,
         )
         published += 1
-        log.info("[%s] Seeded: %s (%d so far)", network, urlname, published)
 
+    log.info("[%s] Seeded %d groups (%d total unique so far)",
+             network, published, len(seen_urlnames))
     return published
 
 
@@ -99,17 +130,28 @@ async def run(settings: Settings) -> None:
         settings.topic_groups_to_scrape,
         settings.topic_groups_raw,
         settings.topic_events_raw,
-    ], num_partitions=2)
+    ], num_partitions=20)
 
     producer = make_producer(settings)
 
+    # Resolve which networks to scrape
+    if settings.pro_networks_str.upper() == "ALL":
+        networks = PRO_NETWORKS
+        log.info("Scraping ALL %d known pro networks", len(networks))
+    else:
+        networks = settings.pro_networks
+        log.info("Scraping %d networks: %s", len(networks), networks)
+
+    seen_urlnames: set[str] = set()
     total = 0
-    for network in settings.pro_networks:
-        count = await seed_network(network, settings, producer)
+
+    for network in networks:
+        count = await seed_network(network, settings, producer, seen_urlnames)
         total += count
 
     producer.flush(timeout=30)
-    log.info("Seed complete. %d groups published.", total)
+    log.info("Seed complete. %d unique groups published across %d networks.",
+             total, len(networks))
 
 
 def main() -> None:

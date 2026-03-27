@@ -89,7 +89,7 @@ async def fetch_events(
     upcoming: list[dict] = []
 
     cursor = None
-    while len(past) < max_events:
+    while max_events == 0 or len(past) < max_events:
         variables = {"urlname": urlname, "beforeDateTime": now}
         if cursor:
             variables["after"] = cursor
@@ -110,7 +110,7 @@ async def fetch_events(
                  .get("edges", []))
     upcoming.extend(edge["node"] for edge in edges if "node" in edge)
 
-    return past[:max_events], upcoming
+    return (past if max_events == 0 else past[:max_events]), upcoming
 
 
 # ── Geocoding via Postgres ────────────────────────────────────────────────────

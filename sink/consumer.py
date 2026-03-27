@@ -9,6 +9,7 @@ Usage:
     python -m sink.consumer
 """
 import json
+import os
 import logging
 import sys
 from datetime import datetime, timezone
@@ -110,6 +111,10 @@ def run(settings: Settings) -> None:
         settings.topic_events_raw,
     )
 
+    drain_mode = os.environ.get("DRAIN_MODE", "").lower() == "true"
+    empty_polls = 0
+    empty_polls_needed = 3  # 3 × 5s silence = both topics drained
+
     groups_written = 0
     events_written = 0
 
@@ -119,12 +124,20 @@ def run(settings: Settings) -> None:
                 msg = consumer.poll(timeout=5.0)
 
                 if msg is None:
-                    if groups_written or events_written:
-                        log.info(
-                            "Waiting… (groups: %d, events: %d written so far)",
-                            groups_written, events_written,
-                        )
+                    if drain_mode:
+                        empty_polls += 1
+                        log.info("No messages (%d/%d)… (groups: %d, events: %d)",
+                                 empty_polls, empty_polls_needed,
+                                 groups_written, events_written)
+                        if empty_polls >= empty_polls_needed:
+                            log.info("Topics drained — exiting.")
+                            break
+                    elif groups_written or events_written:
+                        log.info("Waiting… (groups: %d, events: %d written so far)",
+                                 groups_written, events_written)
                     continue
+
+                empty_polls = 0  # reset on any message
 
                 if msg.error():
                     log.error("Kafka error: %s", msg.error())

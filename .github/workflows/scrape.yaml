@@ -60,13 +60,9 @@ jobs:
           DRAIN_MODE:              "true"
         run: |
           python -m sink.consumer &
-          SINK_PID=$!
-
-          python -m worker.scraper
-          # Worker exits when topic is drained
-
-          # Give sink extra time to flush any remaining FK-retried events
-          wait $SINK_PID
+          python -m worker.scraper &
+          python -m worker.scraper &
+          wait
           echo "Pipeline complete."
 
       - name: Render map

@@ -11,6 +11,7 @@ Usage:
     python -m worker.scraper
 """
 import asyncio
+import os
 import json
 import logging
 import sys
@@ -321,13 +322,26 @@ async def run(settings: Settings) -> None:
     producer = make_producer(settings)
     log.info("Worker started. Listening on '%s'…", settings.topic_groups_to_scrape)
 
+    # drain_mode: exit when the topic is empty rather than waiting forever.
+    # Enabled via DRAIN_MODE=true env var — used by CI/GHA runs.
+    drain_mode = os.environ.get("DRAIN_MODE", "").lower() == "true"
+    empty_polls = 0
+    empty_polls_needed = 3  # 3 × 5s = 15s of silence = topic is drained
+
     with psycopg.connect(settings.postgres_uri) as pg:
         async with httpx.AsyncClient(timeout=30) as client:
             try:
                 while True:
                     msg = consumer.poll(timeout=5.0)
                     if msg is None:
+                        if drain_mode:
+                            empty_polls += 1
+                            log.info("No messages (%d/%d)…", empty_polls, empty_polls_needed)
+                            if empty_polls >= empty_polls_needed:
+                                log.info("Topic drained — exiting.")
+                                break
                         continue
+                    empty_polls = 0  # reset on any message
                     if msg.error():
                         log.error("Kafka error: %s", msg.error())
                         continue

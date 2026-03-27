@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 
 import httpx
 
-from seed.networks import PRO_NETWORKS
 from shared.kafka_client import ensure_topics, make_producer, publish
 from shared.models import GroupSeed
 from shared.settings import Settings

@@ -1,0 +1,39 @@
+"""
+seed/networks.py
+────────────────
+Known Meetup Pro networks.
+"""
+
+PRO_NETWORKS = [
+    "pydata",
+    "kaggle",
+    "aws-cloud",
+    "google-cloud",
+    "microsoft-azure",
+    "devopsdays",
+    "hashicorp",
+    "cncf",
+    "docker",
+    "mongodb",
+    "confluent",
+    "datastax",
+    "elastic",
+    "neo4j",
+    "redis",
+    "huggingface",
+    "nvidia",
+    "golang",
+    "rust-community",
+    "scala",
+    "kotlin",
+    "grafana",
+    "datadoghq",
+    "women-who-code",
+    "girl-develop-it",
+    "black-tech",
+    "techqueria",
+    "apache-software-foundation",
+    "linuxfoundation",
+    "tableau",
+    "dbt-community",
+]

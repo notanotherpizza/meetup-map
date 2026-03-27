@@ -40,6 +40,24 @@ HEADERS = {
 }
 
 
+SITEMAP_URL = "https://www.meetup.com/sw_pro_1.xml.gz"
+
+
+async def fetch_all_networks(client: httpx.AsyncClient) -> list[str]:
+    """Fetch all pro network slugs from the Meetup sitemap."""
+    import gzip, re
+    resp = await client.get(
+        SITEMAP_URL,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; meetupmap-seed/0.1)"},
+    )
+    resp.raise_for_status()
+    content = gzip.decompress(resp.content).decode()
+    networks = re.findall(r'meetup\.com/pro/([^/<]+)/', content)
+    unique = sorted(set(networks))
+    log.info("Fetched %d pro networks from sitemap", len(unique))
+    return unique
+
+
 async def fetch_groups(network: str, client: httpx.AsyncClient) -> list[dict]:
     """Single API call — returns all groups for a pro network."""
     resp = await client.post(
@@ -135,12 +153,13 @@ async def run(settings: Settings) -> None:
     producer = make_producer(settings)
 
     # Resolve which networks to scrape
-    if settings.pro_networks_str.upper() == "ALL":
-        networks = PRO_NETWORKS
-        log.info("Scraping ALL %d known pro networks", len(networks))
-    else:
-        networks = settings.pro_networks
-        log.info("Scraping %d networks: %s", len(networks), networks)
+    async with httpx.AsyncClient(timeout=60) as sitemap_client:
+        if settings.pro_networks_str.upper() == "ALL":
+            networks = await fetch_all_networks(sitemap_client)
+            log.info("Scraping ALL %d networks from sitemap", len(networks))
+        else:
+            networks = settings.pro_networks
+            log.info("Scraping %d networks: %s", len(networks), networks)
 
     seen_urlnames: set[str] = set()
     total = 0

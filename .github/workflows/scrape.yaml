@@ -50,7 +50,7 @@ jobs:
           PRO_NETWORKS_STR:        ${{ github.event.inputs.networks }}
         run: python -m seed.producer
 
-      - name: Scrape (worker + sink in parallel, both drain and exit)
+      - name: Scrape
         env:
           KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
           POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
@@ -59,9 +59,21 @@ jobs:
           REQUEST_DELAY_SECONDS:   "1.5"
           DRAIN_MODE:              "true"
         run: |
-          python -m sink.consumer &
           python -m worker.scraper &
           python -m worker.scraper &
+          wait
+          echo "Pipeline complete."
+
+      - name: Sink
+        env:
+          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
+          POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
+          PRO_NETWORKS_STR:        ${{ github.event.inputs.networks }}
+          MAX_EVENTS_PER_GROUP:    ${{ github.event.inputs.max_events }}
+          REQUEST_DELAY_SECONDS:   "1.5"
+          DRAIN_MODE:              "true"
+        run: |
+          python -m sink.consumer 
           wait
           echo "Pipeline complete."
 

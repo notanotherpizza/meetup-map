@@ -113,7 +113,7 @@ def run(settings: Settings) -> None:
 
     drain_mode = os.environ.get("DRAIN_MODE", "").lower() == "true"
     empty_polls = 0
-    empty_polls_needed = 3  # 3 × 5s silence = both topics drained
+    empty_polls_needed = 6  # 6 × 5s = 30s silence — more time for FK retry buffer to flush
 
     groups_written = 0
     events_written = 0

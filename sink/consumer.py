@@ -101,7 +101,7 @@ def run(settings: Settings) -> None:
     # Single consumer subscribed to both raw topics
     consumer = make_consumer(
         settings,
-        group_id="meetupmap-sink",
+        group_id="meetupmap-sink-homelab",
         topics=[settings.topic_groups_raw, settings.topic_events_raw],
     )
 

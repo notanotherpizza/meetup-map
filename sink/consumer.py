@@ -137,7 +137,6 @@ def run(settings: Settings) -> None:
                                  groups_written, events_written)
                     continue
 
-                empty_polls = 0  # reset on any message
 
                 if msg.error():
                     log.error("Kafka error: %s", msg.error())
@@ -156,6 +155,7 @@ def run(settings: Settings) -> None:
                         events_written += 1
 
                     consumer.commit(msg)
+                    empty_polls = 0  # reset only on successful commit
 
                 except psycopg.errors.ForeignKeyViolation:
                     # Group not yet written — don't commit, will retry

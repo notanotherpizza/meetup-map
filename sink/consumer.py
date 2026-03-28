@@ -174,7 +174,7 @@ def run(settings: Settings) -> None:
                 groups_written, events_written,
             )
         finally:
-            consumer.close()
+            consumer.close(autocommit=False)
 
 
 def main() -> None:

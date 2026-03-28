@@ -1,19 +1,13 @@
-# .github/workflows/scrape.yml
-# Runs the full scrape pipeline: seed → worker → sink → render map.
-# Worker and sink both exit automatically when the topic is drained.
-#
-# Trigger manually from the Actions tab, or add a schedule.
-
 name: Scrape
 
 on:
   workflow_dispatch:
     inputs:
       networks:
-        description: "Pro networks to scrape (space separated)"
+        description: "Pro networks (space separated, or ALL)"
         default: "pydata"
       max_events:
-        description: "Max past events per group"
+        description: "Max past events per group (0 = unlimited)"
         default: "200"
 
 permissions:
@@ -26,16 +20,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+      - run: pip install -e .
 
-      - name: Install dependencies
-        run: pip install -e .
-
-      - name: Write Kafka certs
+      - name: Write certs
         run: |
           mkdir -p certs
           echo "${{ secrets.KAFKA_CA_PEM }}"       > certs/ca.pem
@@ -50,32 +41,18 @@ jobs:
           PRO_NETWORKS_STR:        ${{ github.event.inputs.networks }}
         run: python -m seed.producer
 
-      - name: Scrape
+      - name: Scrape and sink
         env:
           KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
           POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
-          PRO_NETWORKS_STR:        ${{ github.event.inputs.networks }}
           MAX_EVENTS_PER_GROUP:    ${{ github.event.inputs.max_events }}
           REQUEST_DELAY_SECONDS:   "1.5"
           DRAIN_MODE:              "true"
         run: |
-          sleep 10
+          python -m sink.consumer &
+          sleep 5
           python -m worker.scraper &
           python -m worker.scraper &
-          wait
-          echo "Pipeline complete."
-
-      - name: Sink
-        env:
-          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
-          POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
-          PRO_NETWORKS_STR:        ${{ github.event.inputs.networks }}
-          MAX_EVENTS_PER_GROUP:    ${{ github.event.inputs.max_events }}
-          REQUEST_DELAY_SECONDS:   "1.5"
-          DRAIN_MODE:              "true"
-        run: |
-          sleep 10
-          python -m sink.consumer 
           wait
           echo "Pipeline complete."
 

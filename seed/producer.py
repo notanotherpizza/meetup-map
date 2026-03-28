@@ -141,6 +141,25 @@ async def seed_network(
     return published
 
 
+async def create_run(settings: Settings, networks: list[str]) -> int | None:
+    """Create a scrape_runs row and return the run_id."""
+    try:
+        import psycopg
+        with psycopg.connect(settings.postgres_uri) as pg:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO scrape_runs (networks) VALUES (%s) RETURNING id",
+                    (",".join(networks),)
+                )
+                run_id = cur.fetchone()[0]
+            pg.commit()
+        log.info("Created scrape run #%d", run_id)
+        return run_id
+    except Exception as e:
+        log.warning("Could not create scrape run: %s", e)
+        return None
+
+
 async def run(settings: Settings) -> None:
     log.info("Ensuring Kafka topics exist…")
     ensure_topics(settings, topics=[
@@ -159,6 +178,10 @@ async def run(settings: Settings) -> None:
         else:
             networks = settings.pro_networks
             log.info("Scraping %d networks: %s", len(networks), networks)
+
+    run_id = await create_run(settings, networks)
+    if run_id:
+        log.info("Run ID: %d — set RUN_ID=%d in worker env to track progress", run_id, run_id)
 
     seen_urlnames: set[str] = set()
     total = 0

@@ -273,6 +273,7 @@ async def process_seed(
     pg: psycopg.Connection,
 ) -> None:
     log.info("Processing: %s", seed.group_urlname)
+    t_start = asyncio.get_event_loop().time()
 
     # Fire groupHome and both event queries concurrently — 3 API calls in parallel
     group_home, (past, upcoming) = await asyncio.gather(
@@ -312,6 +313,29 @@ async def process_seed(
             published += 1
 
     log.info("  → Published 1 group + %d events for %s", published, seed.group_urlname)
+
+    # Write telemetry to scrape_log
+    run_id = os.environ.get("RUN_ID")
+    worker_id = os.environ.get("WORKER_ID", __import__("socket").gethostname())
+    duration_ms = int((asyncio.get_event_loop().time() - t_start) * 1000)
+    try:
+        with pg.cursor() as cur:
+            cur.execute("""
+                INSERT INTO scrape_log
+                    (run_id, worker_id, group_id, pro_network, events_scraped, duration_ms)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                int(run_id) if run_id else None,
+                worker_id,
+                seed.group_urlname,
+                seed.pro_network,
+                published,
+                duration_ms,
+            ))
+        pg.commit()
+    except Exception as e:
+        log.debug("Could not write scrape_log: %s", e)
+        pg.rollback()
 
 
 # ── Consumer loop ─────────────────────────────────────────────────────────────

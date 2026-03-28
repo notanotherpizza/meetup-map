@@ -357,7 +357,7 @@ async def run(settings: Settings) -> None:
             except KeyboardInterrupt:
                 log.info("Shutting down…")
             finally:
-                consumer.close()
+                consumer.close(autocommit=False)
 
 
 def main() -> None:

@@ -6,18 +6,14 @@ on:
       networks:
         description: "Pro networks (space separated, or ALL)"
         default: "pydata"
-      max_events:
-        description: "Max past events per group (0 = unlimited)"
-        default: "200"
 
 permissions:
   contents: write
 
 jobs:
-  scrape:
+  seed:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,7 +21,6 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e .
-
       - name: Write certs
         run: |
           mkdir -p certs
@@ -33,41 +28,9 @@ jobs:
           echo "${{ secrets.KAFKA_SERVICE_CERT }}" > certs/service.cert
           echo "${{ secrets.KAFKA_SERVICE_KEY }}"  > certs/service.key
           chmod 600 certs/*
-
       - name: Seed
         env:
           KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
           POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
           PRO_NETWORKS_STR:        ${{ github.event.inputs.networks }}
         run: python -m seed.producer
-
-      - name: Scrape and sink
-        env:
-          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
-          POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
-          MAX_EVENTS_PER_GROUP:    ${{ github.event.inputs.max_events }}
-          REQUEST_DELAY_SECONDS:   "1.5"
-          DRAIN_MODE:              "true"
-        run: |
-          python -m sink.consumer &
-          SINK_PID=$!
-          sleep 5
-          python -m worker.scraper &
-          python -m worker.scraper &
-          wait %2 %3
-          kill $SINK_PID 2>/dev/null || true
-          echo "Pipeline complete."
-
-      - name: Render map
-        env:
-          POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
-          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
-        run: python -m map.render
-
-      - name: Commit map
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/index.html
-          git diff --staged --quiet || git commit -m "chore: scrape + render $(date -u +%Y-%m-%d)"
-          git push

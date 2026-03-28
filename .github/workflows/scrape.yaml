@@ -50,10 +50,17 @@ jobs:
           DRAIN_MODE:              "true"
         run: |
           python -m sink.consumer &
+          SINK_PID=$!
           sleep 5
           python -m worker.scraper &
+          W1_PID=$!
           python -m worker.scraper &
-          wait
+          W2_PID=$!
+          
+          # Wait up to 5 minutes then force kill
+          timeout 300 bash -c "wait $W1_PID $W2_PID" || true
+          kill $SINK_PID 2>/dev/null || true
+          wait $SINK_PID 2>/dev/null || true
           echo "Pipeline complete."
 
       - name: Render map

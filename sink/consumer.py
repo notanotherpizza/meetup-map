@@ -117,6 +117,7 @@ def run(settings: Settings) -> None:
 
     groups_written = 0
     events_written = 0
+    fk_retry_buffer: dict[str, list[dict]] = {}  # group_id -> [event payloads]
 
     with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as conn:
         try:

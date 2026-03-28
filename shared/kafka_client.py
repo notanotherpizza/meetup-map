@@ -60,6 +60,7 @@ def make_consumer(settings: Settings, group_id: str, topics: list[str]) -> Consu
     cfg = settings.kafka_ssl_config() | {
         "group.id": group_id,
         "auto.offset.reset": "earliest",
+        "max.poll.interval.ms": 1800000,  # 30 min — handles large groups
         # Disable auto-commit — we commit manually after successful processing
         "enable.auto.commit": False,
     }

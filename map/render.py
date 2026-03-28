@@ -92,9 +92,17 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
             except Exception:
                 pass
 
+        # Deterministic jitter for groups geocoded to city-level coordinates
+        # Spreads co-located groups without random movement between renders
+        jitter_seed = int(hashlib.md5(g["id"].encode()).hexdigest()[:8], 16)
+        jitter_lat = ((jitter_seed & 0xffff) / 0xffff - 0.5) * 0.04
+        jitter_lon = ((jitter_seed >> 16 & 0xffff) / 0xffff - 0.5) * 0.06
+        lat = round((g["lat"] or 0) + jitter_lat, 6)
+        lon = round((g["lon"] or 0) + jitter_lon, 6)
+
         features.append({
-            "lat": g["lat"],
-            "lon": g["lon"],
+            "lat": lat,
+            "lon": lon,
             "name": g["name"] or g["id"],
             "city": g["city"] or "",
             "country": (g["country"] or "").upper(),

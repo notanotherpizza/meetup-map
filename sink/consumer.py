@@ -62,7 +62,6 @@ INSERT INTO events (
 )
 ON CONFLICT (id) DO UPDATE SET
     title           = EXCLUDED.title,
-    description     = EXCLUDED.description,
     status          = EXCLUDED.status,
     is_online       = EXCLUDED.is_online,
     venue_name      = EXCLUDED.venue_name,

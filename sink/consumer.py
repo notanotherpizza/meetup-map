@@ -32,21 +32,25 @@ log = logging.getLogger(__name__)
 UPSERT_GROUP = """
 INSERT INTO groups (
     id, name, pro_network, city, country, lat, lon,
-    member_count, meetup_url, last_scraped_at
+    member_count, meetup_url, last_scraped_at, events_scraped_at
 ) VALUES (
     %(group_urlname)s, %(name)s, %(pro_network)s, %(city)s, %(country)s,
-    %(lat)s, %(lon)s, %(member_count)s, %(meetup_url)s, %(scraped_at)s
+    %(lat)s, %(lon)s, %(member_count)s, %(meetup_url)s, %(scraped_at)s,
+    %(events_scraped_at)s
 )
 ON CONFLICT (id) DO UPDATE SET
-    name            = EXCLUDED.name,
-    city            = EXCLUDED.city,
-    country         = EXCLUDED.country,
-    lat             = EXCLUDED.lat,
-    lon             = EXCLUDED.lon,
-    member_count    = EXCLUDED.member_count,
-    meetup_url      = EXCLUDED.meetup_url,
-    last_scraped_at = EXCLUDED.last_scraped_at,
-    updated_at      = now()
+    name              = EXCLUDED.name,
+    city              = EXCLUDED.city,
+    country           = EXCLUDED.country,
+    lat               = EXCLUDED.lat,
+    lon               = EXCLUDED.lon,
+    member_count      = EXCLUDED.member_count,
+    meetup_url        = EXCLUDED.meetup_url,
+    last_scraped_at   = EXCLUDED.last_scraped_at,
+    -- Only advance events_scraped_at if the events scrape succeeded.
+    -- Keeps the last known-good timestamp if this run's events fetch failed.
+    events_scraped_at = COALESCE(EXCLUDED.events_scraped_at, groups.events_scraped_at),
+    updated_at        = now()
 """
 
 UPSERT_EVENT = """
@@ -77,17 +81,19 @@ ON CONFLICT (id) DO UPDATE SET
 
 def handle_group(payload: dict, conn: psycopg.Connection) -> None:
     group = GroupRaw(**payload)
+    # Resolve events_scraped_at: set to now if events scrape succeeded, else None
+    # (COALESCE in the SQL preserves the previous value if None is passed)
+    now = datetime.now(timezone.utc)
+    params = group.model_dump(mode="json")
+    params["events_scraped_at"] = now.isoformat() if group.events_scrape_ok else None
     with conn.cursor() as cur:
-        cur.execute(UPSERT_GROUP, group.model_dump(mode="json"))
+        cur.execute(UPSERT_GROUP, params)
     conn.commit()
-    log.debug("Upserted group: %s", group.group_urlname)
+    log.debug("Upserted group: %s (events_ok=%s)", group.group_urlname, group.events_scrape_ok)
 
 
 def handle_event(payload: dict, conn: psycopg.Connection) -> None:
     event = EventRaw(**payload)
-    # Events reference groups — if the group hasn't arrived yet this will
-    # fail the FK constraint. We log and skip; the message won't be committed
-    # so it will be redelivered and retried.
     with conn.cursor() as cur:
         cur.execute(UPSERT_EVENT, event.model_dump(mode="json"))
     conn.commit()
@@ -97,7 +103,6 @@ def handle_event(payload: dict, conn: psycopg.Connection) -> None:
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def run(settings: Settings) -> None:
-    # Single consumer subscribed to both raw topics
     consumer = make_consumer(
         settings,
         group_id="meetupmap-sink-homelab",
@@ -137,7 +142,6 @@ def run(settings: Settings) -> None:
                                  groups_written, events_written)
                     continue
 
-
                 if msg.error():
                     log.error("Kafka error: %s", msg.error())
                     continue
@@ -158,7 +162,6 @@ def run(settings: Settings) -> None:
                     empty_polls = 0  # reset only on successful commit
 
                 except psycopg.errors.ForeignKeyViolation:
-                    # Group not yet written — don't commit, will retry
                     conn.rollback()
                     log.warning(
                         "FK violation for event %s — group not yet written, will retry",

@@ -203,6 +203,7 @@ def build_group_raw(
     group_home: dict,
     lat: float | None,
     lon: float | None,
+    events_scrape_ok: bool,
 ) -> GroupRaw:
     member_count = (
         (group_home.get("stats") or {})
@@ -221,6 +222,7 @@ def build_group_raw(
         meetup_url=seed.group_url,
         scraped_at=datetime.now(timezone.utc),
         scrape_method="gql2",
+        events_scrape_ok=events_scrape_ok,
     )
 
 
@@ -274,27 +276,45 @@ async def process_seed(
     log.info("Processing: %s", seed.group_urlname)
     t_start = asyncio.get_event_loop().time()
 
-    # Fire groupHome and both event queries concurrently — 3 API calls in parallel
-    group_home, (past, upcoming) = await asyncio.gather(
-        fetch_group_home(seed.group_urlname, client),
-        fetch_events(seed.group_urlname, client, settings.max_events_per_group),
-    )
+    # Fire groupHome concurrently with events queries.
+    # Events are caught independently — a failure sets events_scrape_ok=False
+    # but still allows the group record to be written with last_scraped_at set.
+    events_scrape_ok = False
+    past: list[dict] = []
+    upcoming: list[dict] = []
 
-    log.info("  → %d past, %d upcoming events | members: %s",
+    try:
+        group_home, (past, upcoming) = await asyncio.gather(
+            fetch_group_home(seed.group_urlname, client),
+            fetch_events(seed.group_urlname, client, settings.max_events_per_group),
+        )
+        events_scrape_ok = True
+    except Exception as exc:
+        # Events fetch failed — try group_home alone so we at least write the group
+        log.warning("  Events fetch failed for %s: %s — will still write group record",
+                    seed.group_urlname, exc)
+        try:
+            group_home = await fetch_group_home(seed.group_urlname, client)
+        except Exception:
+            group_home = {}
+
+    log.info("  → %d past, %d upcoming events | members: %s | events_ok: %s",
              len(past), len(upcoming),
-             (group_home.get("stats") or {}).get("memberCounts", {}).get("all", "?"))
+             (group_home.get("stats") or {}).get("memberCounts", {}).get("all", "?"),
+             events_scrape_ok)
 
     # Geocode — Postgres-backed, no local state
     lat, lon = resolve_coords(seed, pg)
 
-    # Publish
+    # Publish group — always, even if events failed
     publish(
         producer,
         topic=settings.topic_groups_raw,
-        value=build_group_raw(seed, group_home, lat, lon).model_dump(mode="json"),
+        value=build_group_raw(seed, group_home, lat, lon, events_scrape_ok).model_dump(mode="json"),
         key=seed.group_urlname,
     )
 
+    # Publish events — only if scrape succeeded
     published = 0
     for event in past:
         er = build_event_raw(seed, event, "past")
@@ -345,8 +365,6 @@ async def run(settings: Settings) -> None:
     producer = make_producer(settings)
     log.info("Worker started. Listening on '%s'…", settings.topic_groups_to_scrape)
 
-    # drain_mode: exit when the topic is empty rather than waiting forever.
-    # Enabled via DRAIN_MODE=true env var — used by CI/GHA runs.
     drain_mode = os.environ.get("DRAIN_MODE", "").lower() == "true"
     empty_polls = 0
     empty_polls_needed = 3  # 3 × 5s = 15s of silence = topic is drained

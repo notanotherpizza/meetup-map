@@ -45,9 +45,35 @@ def fetch_groups(pg: psycopg.Connection) -> list[dict]:
                 g.member_count,
                 g.meetup_url,
                 g.pro_network,
-                COUNT(e.id)                                        AS total_events,
-                COUNT(e.id) FILTER (WHERE e.status = 'upcoming')  AS upcoming_events,
-                MAX(e.starts_at) FILTER (WHERE e.status = 'past') AS last_event_at
+                g.last_scraped_at,
+                g.events_scraped_at,
+                COUNT(e.id)                                         AS total_events,
+                COUNT(e.id) FILTER (WHERE e.status = 'upcoming')   AS upcoming_events,
+                -- Last past event with a valid venue location
+                MAX(e.starts_at) FILTER (
+                    WHERE e.status = 'past'
+                )                                                   AS last_event_at,
+                -- Lat/lon of the most recent past event that has venue coords
+                (
+                    SELECT e2.venue_lat
+                    FROM events e2
+                    WHERE e2.group_id = g.id
+                      AND e2.status = 'past'
+                      AND e2.venue_lat IS NOT NULL
+                      AND e2.venue_lon IS NOT NULL
+                    ORDER BY e2.starts_at DESC
+                    LIMIT 1
+                )                                                   AS last_event_lat,
+                (
+                    SELECT e2.venue_lon
+                    FROM events e2
+                    WHERE e2.group_id = g.id
+                      AND e2.status = 'past'
+                      AND e2.venue_lat IS NOT NULL
+                      AND e2.venue_lon IS NOT NULL
+                    ORDER BY e2.starts_at DESC
+                    LIMIT 1
+                )                                                   AS last_event_lon
             FROM groups g
             LEFT JOIN events e ON e.group_id = g.id
             WHERE g.lat IS NOT NULL AND g.lon IS NOT NULL
@@ -92,13 +118,40 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
             except Exception:
                 pass
 
-        # Deterministic jitter for groups geocoded to city-level coordinates
-        # Spreads co-located groups without random movement between renders
-        jitter_seed = int(hashlib.md5(g["id"].encode()).hexdigest()[:8], 16)
-        jitter_lat = ((jitter_seed & 0xffff) / 0xffff - 0.5) * 0.04
-        jitter_lon = ((jitter_seed >> 16 & 0xffff) / 0xffff - 0.5) * 0.06
-        lat = round((g["lat"] or 0) + jitter_lat, 6)
-        lon = round((g["lon"] or 0) + jitter_lon, 6)
+        # Use last event venue coords if available, fall back to group geocode
+        use_event_location = (
+            g["last_event_lat"] is not None and g["last_event_lon"] is not None
+        )
+        base_lat = g["last_event_lat"] if use_event_location else g["lat"]
+        base_lon = g["last_event_lon"] if use_event_location else g["lon"]
+
+        # Deterministic jitter — only apply for group-level geocoded coords,
+        # not for precise venue coords which are already distinct
+        if use_event_location:
+            lat = round(base_lat, 6)
+            lon = round(base_lon, 6)
+        else:
+            jitter_seed = int(hashlib.md5(g["id"].encode()).hexdigest()[:8], 16)
+            jitter_lat = ((jitter_seed & 0xffff) / 0xffff - 0.5) * 0.04
+            jitter_lon = ((jitter_seed >> 16 & 0xffff) / 0xffff - 0.5) * 0.06
+            lat = round((base_lat or 0) + jitter_lat, 6)
+            lon = round((base_lon or 0) + jitter_lon, 6)
+
+        # Four distinct states using last_scraped_at + events_scraped_at:
+        # - last_scraped_at NULL                       -> never reached by worker
+        # - last_scraped_at SET, events_scraped_at NULL -> group written, events fetch failed
+        # - events_scraped_at SET, total_events == 0   -> scraped OK, genuinely no events
+        # - events_scraped_at SET, total_events > 0    -> normal
+        total_events = int(g["total_events"] or 0)
+
+        if g["last_scraped_at"] is None:
+            event_status = "unscraped"      # grey -- never processed by worker
+        elif g["events_scraped_at"] is None:
+            event_status = "events_failed"  # red -- group written but events fetch failed
+        elif total_events == 0:
+            event_status = "no_events"      # amber -- scraped OK, genuinely no events
+        else:
+            event_status = "ok"             # normal
 
         features.append({
             "lat": lat,
@@ -107,12 +160,14 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
             "city": g["city"] or "",
             "country": (g["country"] or "").upper(),
             "members": g["member_count"] or 0,
-            "total_events": int(g["total_events"] or 0),
+            "total_events": total_events,
             "upcoming": int(g["upcoming_events"] or 0),
             "days_inactive": days_inactive,
             "url": g["meetup_url"] or "",
             "network": g["pro_network"] or "",
             "color": colour_map.get(g["pro_network"] or "", "#8b5cf6"),
+            "event_location": use_event_location,  # true = pinned to venue, false = city geocode
+            "event_status": event_status,
         })
 
     return json.dumps(features, ensure_ascii=False)
@@ -186,12 +241,30 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   font-size: 10px; color: #2563eb; cursor: pointer;
   margin-top: 4px; text-align: center; display: none;
 }}
+/* Map key for event status indicators */
+#map-key {{
+  position: absolute; bottom: 24px; right: 12px; z-index: 1000;
+  background: rgba(255,255,255,0.95);
+  border-radius: 8px; padding: 8px 12px; font-size: 11px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  line-height: 2;
+}}
+#map-key-title {{ font-weight: 600; font-size: 12px; margin-bottom: 4px; }}
+.key-item {{ display: flex; align-items: center; gap: 6px; }}
+.key-dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
+.key-ring {{
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid currentColor; background: transparent;
+}}
 .leaflet-popup-content {{ font-size: 13px; line-height: 1.5; min-width: 180px; }}
 .popup-name {{ font-weight: 600; font-size: 14px; margin-bottom: 4px; }}
 .popup-url {{ color: #2563eb; text-decoration: none; font-size: 12px; }}
 .popup-url:hover {{ text-decoration: underline; }}
 .popup-meta {{ color: #666; font-size: 12px; margin-top: 2px; }}
 .tag-upcoming {{ background: #22c55e; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }}
+.tag-unscraped {{ background: #9ca3af; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }}
+.tag-events-failed {{ background: #ef4444; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }}
+.tag-no-events {{ background: #f59e0b; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }}
 </style>
 </head>
 <body>
@@ -212,6 +285,16 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   <div id="legend-list"></div>
   <div id="legend-clear" onclick="clearFilter()">Show all</div>
 </div>
+<div id="map-key">
+  <div id="map-key-title">Location source</div>
+  <div class="key-item"><div class="key-dot" style="background:#6366f1"></div> Pinned to last event venue</div>
+  <div class="key-item"><div class="key-dot" style="background:#9ca3af"></div> City-level geocode only</div>
+  <div id="map-key-title" style="margin-top:8px">Event data</div>
+  <div class="key-item"><div class="key-dot" style="background:#22c55e"></div> Has events</div>
+  <div class="key-item"><div class="key-dot" style="background:#f59e0b"></div> Scraped — no events found</div>
+  <div class="key-item"><div class="key-dot" style="background:#ef4444"></div> Events fetch failed</div>
+  <div class="key-item"><div class="key-dot" style="background:#9ca3af; opacity:0.5"></div> Not yet scraped</div>
+</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script>
@@ -228,26 +311,60 @@ const clusters = L.markerClusterGroup({{ maxClusterRadius: 40, disableClustering
 const markers = [];
 let activeNetworks = null; // null = all visible
 
+function markerStyle(g) {{
+  // Colour encodes event status; opacity encodes location precision
+  let fillColor, fillOpacity, dashArray;
+  if (g.event_status === 'unscraped') {{
+    fillColor = '#9ca3af';
+    fillOpacity = 0.4;
+    dashArray = '3,3';  // dashed outline = uncertain
+  }} else if (g.event_status === 'no_events') {{
+    fillColor = '#f59e0b';
+    fillOpacity = 0.75;
+    dashArray = null;
+  }} else {{
+    // ok — use network colour, full opacity for venue-pinned, slightly less for geocoded
+    fillColor = g.color;
+    fillOpacity = g.event_location ? 0.9 : 0.6;
+    dashArray = null;
+  }}
+  const size = Math.max(6, Math.min(14, 6 + Math.log1p(g.members) * 0.8));
+  return {{ radius: size, fillColor, color: 'white', weight: g.event_location ? 1.5 : 0.5,
+            fillOpacity, dashArray }};
+}}
+
 function popupHtml(g) {{
   const upcoming = g.upcoming > 0 ? `<span class="tag-upcoming">${{g.upcoming}} upcoming</span> ` : '';
   const last = g.days_inactive !== null ? `Last event ${{g.days_inactive}}d ago` : 'No past events';
   const members = g.members > 0 ? `${{g.members.toLocaleString()}} members · ` : '';
+
+  let statusTag = '';
+  if (g.event_status === 'unscraped') {{
+    statusTag = '<span class="tag-unscraped">Not yet scraped</span> ';
+  }} else if (g.event_status === 'events_failed') {{
+    statusTag = '<span class="tag-events-failed">Events fetch failed</span> ';
+  }} else if (g.event_status === 'no_events') {{
+    statusTag = '<span class="tag-no-events">No events found</span> ';
+  }}
+
+  const locationNote = g.event_location
+    ? '<div class="popup-meta" style="color:#6366f1;font-size:11px">📍 Pinned to last event venue</div>'
+    : '<div class="popup-meta" style="color:#9ca3af;font-size:11px">📍 City-level location</div>';
+
   return `
     <div class="popup-name">${{g.name}}</div>
     <div class="popup-meta">${{g.city}}${{g.city && g.country ? ', ' : ''}}${{g.country}}</div>
     <div class="popup-meta" style="color:${{g.color}}">${{g.network}}</div>
     <div class="popup-meta">${{members}}${{g.total_events}} events</div>
-    <div class="popup-meta" style="margin-top:4px">${{upcoming}}${{last}}</div>
+    <div class="popup-meta" style="margin-top:4px">${{statusTag}}${{upcoming}}${{g.event_status === 'ok' ? last : ''}}</div>
+    ${{locationNote}}
     ${{g.url ? `<div style="margin-top:6px"><a class="popup-url" href="${{g.url}}" target="_blank">View on Meetup →</a></div>` : ''}}
   `;
 }}
 
 GROUPS.forEach(g => {{
-  const size = Math.max(6, Math.min(14, 6 + Math.log1p(g.members) * 0.8));
-  const marker = L.circleMarker([g.lat, g.lon], {{
-    radius: size, fillColor: g.color, color: 'transparent',
-    fillOpacity: 0.85, weight: 0,
-  }});
+  const style = markerStyle(g);
+  const marker = L.circleMarker([g.lat, g.lon], style);
   marker.bindPopup(popupHtml(g), {{ maxWidth: 260 }});
   marker._network = g.network;
   markers.push(marker);

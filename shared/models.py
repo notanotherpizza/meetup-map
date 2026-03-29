@@ -44,6 +44,7 @@ class GroupRaw(BaseModel):
     meetup_url: str
     scraped_at: datetime
     scrape_method: str
+    total_past_events: Optional[int] = None  # from GQL totalCount on first page
     # Whether the events queries (past + upcoming) completed without error.
     # False means a GQL/network failure — events may be missing, not genuinely absent.
     # Sink uses this to set events_scraped_at only on success.

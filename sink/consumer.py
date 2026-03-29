@@ -32,11 +32,12 @@ log = logging.getLogger(__name__)
 UPSERT_GROUP = """
 INSERT INTO groups (
     id, name, pro_network, city, country, lat, lon,
-    member_count, meetup_url, last_scraped_at, events_scraped_at
+    member_count, meetup_url, last_scraped_at, events_scraped_at,
+    total_past_events
 ) VALUES (
     %(group_urlname)s, %(name)s, %(pro_network)s, %(city)s, %(country)s,
     %(lat)s, %(lon)s, %(member_count)s, %(meetup_url)s, %(scraped_at)s,
-    %(events_scraped_at)s
+    %(events_scraped_at)s, %(total_past_events)s
 )
 ON CONFLICT (id) DO UPDATE SET
     name              = EXCLUDED.name,
@@ -50,6 +51,8 @@ ON CONFLICT (id) DO UPDATE SET
     -- Only advance events_scraped_at if the events scrape succeeded.
     -- Keeps the last known-good timestamp if this run's events fetch failed.
     events_scraped_at = COALESCE(EXCLUDED.events_scraped_at, groups.events_scraped_at),
+    -- Only update total_past_events if we got a value (events scrape succeeded)
+    total_past_events = COALESCE(EXCLUDED.total_past_events, groups.total_past_events),
     updated_at        = now()
 """
 

@@ -88,10 +88,15 @@ async def fetch_events(
     urlname: str,
     client: httpx.AsyncClient,
     max_events: int,
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], int | None]:
+    """Returns (past_events, upcoming_events, total_past_count).
+    total_past_count comes from GQL totalCount on the first page —
+    accurate even when max_events caps how many we actually fetch.
+    """
     now = datetime.now(timezone.utc).isoformat()
     past: list[dict] = []
     upcoming: list[dict] = []
+    total_past_count: int | None = None
 
     cursor = None
     while max_events == 0 or len(past) < max_events:
@@ -100,6 +105,11 @@ async def fetch_events(
             variables["after"] = cursor
         data = await gql(client, "getPastGroupEvents", variables, PAST_EVENTS_HASH)
         events_data = data.get("data", {}).get("groupByUrlname", {}).get("events", {})
+
+        # Capture totalCount from the first page only
+        if total_past_count is None:
+            total_past_count = events_data.get("totalCount")
+
         edges = events_data.get("edges", [])
         past.extend(edge["node"] for edge in edges if "node" in edge)
         page_info = events_data.get("pageInfo", {})
@@ -115,7 +125,7 @@ async def fetch_events(
                  .get("edges", []))
     upcoming.extend(edge["node"] for edge in edges if "node" in edge)
 
-    return (past if max_events == 0 else past[:max_events]), upcoming
+    return (past if max_events == 0 else past[:max_events]), upcoming, total_past_count
 
 
 # ── Geocoding via Postgres ────────────────────────────────────────────────────
@@ -286,6 +296,7 @@ def build_group_raw(
     lat: float | None,
     lon: float | None,
     events_scrape_ok: bool,
+    total_past_events: int | None = None,
 ) -> GroupRaw:
     member_count = (
         (group_home.get("stats") or {})
@@ -305,6 +316,7 @@ def build_group_raw(
         scraped_at=datetime.now(timezone.utc),
         scrape_method="gql2",
         events_scrape_ok=events_scrape_ok,
+        total_past_events=total_past_events,
     )
 
 
@@ -411,7 +423,7 @@ async def process_seed(
     group_home: dict = {}
 
     try:
-        group_home, (past, upcoming) = await asyncio.gather(
+        group_home, (past, upcoming, total_past_count) = await asyncio.gather(
             fetch_group_home(seed.group_urlname, client),
             fetch_events(seed.group_urlname, client, settings.max_events_per_group),
         )
@@ -419,13 +431,16 @@ async def process_seed(
     except Exception as exc:
         log.warning("  Events fetch failed for %s: %s — will still write group record",
                     seed.group_urlname, exc)
+        total_past_count = None
         try:
             group_home = await fetch_group_home(seed.group_urlname, client)
         except Exception:
             group_home = {}
 
-    log.info("  -> %d past, %d upcoming events | members: %s | events_ok: %s",
-             len(past), len(upcoming),
+    log.info("  -> %d/%s past, %d upcoming | members: %s | events_ok: %s",
+             len(past),
+             total_past_count if total_past_count is not None else "?",
+             len(upcoming),
              (group_home.get("stats") or {}).get("memberCounts", {}).get("all", "?"),
              events_scrape_ok)
 
@@ -436,7 +451,7 @@ async def process_seed(
     publish(
         producer,
         topic=settings.topic_groups_raw,
-        value=build_group_raw(seed, group_home, lat, lon, events_scrape_ok).model_dump(mode="json"),
+        value=build_group_raw(seed, group_home, lat, lon, events_scrape_ok, total_past_count).model_dump(mode="json"),
         key=seed.group_urlname,
     )
 

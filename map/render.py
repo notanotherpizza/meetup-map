@@ -48,7 +48,8 @@ def fetch_groups(pg: psycopg.Connection) -> list[dict]:
                 g.pro_network,
                 g.last_scraped_at,
                 g.events_scraped_at,
-                COUNT(e.id)                                         AS total_events,
+                g.total_past_events,
+                COUNT(e.id)                                         AS total_events_in_db,
                 COUNT(e.id) FILTER (WHERE e.status = 'upcoming')   AS upcoming_events,
                 MAX(e.starts_at) FILTER (
                     WHERE e.status = 'past'
@@ -157,7 +158,9 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
         # - last_scraped_at SET, events_scraped_at NULL -> group written, events fetch failed
         # - events_scraped_at SET, total_events == 0   -> scraped OK, genuinely no events
         # - events_scraped_at SET, total_events > 0    -> normal
-        total_events = int(g["total_events"] or 0)
+        total_events_in_db = int(g["total_events_in_db"] or 0)
+        # Use GQL totalCount if available, fall back to DB count
+        total_events = int(g["total_past_events"] or 0) if g["total_past_events"] else total_events_in_db
 
         if g["last_scraped_at"] is None:
             event_status = "unscraped"      # grey -- never processed by worker
@@ -195,7 +198,7 @@ def render(groups: list[dict], networks: list[dict], generated_at: str) -> str:
     networks_json = json.dumps(networks)
     total = len(groups)
     total_members = sum(g["member_count"] or 0 for g in groups)
-    total_events = sum(int(g["total_events"] or 0) for g in groups)
+    total_events = sum(int(g["total_events_in_db"] or 0) for g in groups)
 
     return f"""<!DOCTYPE html>
 <html lang="en">

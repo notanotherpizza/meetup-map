@@ -464,17 +464,23 @@ async def process_seed(
             most_recent_past_venue_id = vid
             break
 
+    # Only geocode the next upcoming event's venue, not all upcoming.
+    # This caps geocoding at 2 venues max per group (most recent past + next upcoming).
     upcoming_venue_ids = set()
-    for e in upcoming:
-        v = e.get("venue") or {}
-        vid = str(v.get("id", "")).strip()
-        is_online = (
+    _upcoming_with_venues = [
+        e for e in upcoming
+        if str((e.get("venue") or {}).get("id", "")).strip()
+        and not (
             e.get("isOnline", False)
             or e.get("venueType") == "ONLINE"
-            or "online" in (v.get("name") or "").lower()
+            or "online" in ((e.get("venue") or {}).get("name") or "").lower()
         )
-        if vid and not is_online:
-            upcoming_venue_ids.add(vid)
+    ]
+    if _upcoming_with_venues:
+        _upcoming_with_venues.sort(key=lambda e: e.get("dateTime") or "")
+        _next_venue_id = str(_upcoming_with_venues[0].get("venue", {}).get("id", "")).strip()
+        if _next_venue_id:
+            upcoming_venue_ids.add(_next_venue_id)
 
     geocode_venue_ids = upcoming_venue_ids.copy()
     if most_recent_past_venue_id:

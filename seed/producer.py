@@ -170,6 +170,45 @@ async def run(settings: Settings) -> None:
 
     producer = make_producer(settings)
 
+    async with httpx.AsyncClient(timeout=60) as sitemap_client:
+        if settings.pro_networks_str.upper() == "ALL":
+            networks = await fetch_all_networks(sitemap_client)
+            log.info("Scraping ALL %d networks from sitemap", len(networks))
+        else:
+            networks = settings.pro_networks
+            log.info("Scraping %d networks: %s", len(networks), networks)
+
+    run_id = await create_run(settings, networks)
+    if run_id:
+        log.info("Run ID: %d — set RUN_ID=%d in worker env to track progress", run_id, run_id)
+
+    seen_urlnames: set[str] = set()
+    total = 0
+    sem = asyncio.Semaphore(10)
+
+    async def seed_bounded(network: str) -> int:
+        async with sem:
+            return await seed_network(network, settings, producer, seen_urlnames)
+
+    results = await asyncio.gather(*[seed_bounded(n) for n in networks], return_exceptions=True)
+
+    for network, result in zip(networks, results):
+        if isinstance(result, Exception):
+            log.warning("[%s] Failed: %s", network, result)
+        else:
+            total += result
+
+    producer.flush(timeout=30)
+    log.info("Seed complete. %d unique groups published across %d networks.", total, len(networks))
+    log.info("Ensuring Kafka topics exist…")
+    ensure_topics(settings, topics=[
+        settings.topic_groups_to_scrape,
+        settings.topic_groups_raw,
+        settings.topic_events_raw,
+    ], num_partitions=20)
+
+    producer = make_producer(settings)
+
     # Resolve which networks to scrape
     async with httpx.AsyncClient(timeout=60) as sitemap_client:
         if settings.pro_networks_str.upper() == "ALL":

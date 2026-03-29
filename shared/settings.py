@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     topic_groups_to_scrape: str = "groups-to-scrape"
     topic_groups_raw: str = "groups-raw"
     topic_events_raw: str = "events-raw"
+    topic_venues_raw: str = "venues-raw"
 
     # ── Scraping ──────────────────────────────────────────────────────────────
     pro_networks_str: str = "pydata"

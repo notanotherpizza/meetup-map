@@ -50,10 +50,31 @@ class GroupRaw(BaseModel):
     events_scrape_ok: bool = False
 
 
+class VenueRaw(BaseModel):
+    """
+    Published to: venues-raw
+    One message per unique venue encountered during scraping.
+    Geocoding is performed by the worker before publishing so the sink
+    can write lat/lon directly without needing Nominatim access.
+    """
+    venue_id: str                        # Meetup's venue ID
+    name: Optional[str] = None          # raw name — often a postcode
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    lat: Optional[float] = None          # geocoded by worker
+    lon: Optional[float] = None          # geocoded by worker
+    geocode_source: Optional[str] = None # 'postcode' | 'address' | 'city' | 'miss'
+    geocode_query: Optional[str] = None  # what was sent to Nominatim
+    scraped_at: datetime
+
+
 class EventRaw(BaseModel):
     """
     Published to: events-raw
     One message per event, published by a worker after scraping a group.
+    venue_id references a VenueRaw message — sink must write venues before events.
     """
     event_id: str
     group_urlname: str
@@ -61,9 +82,7 @@ class EventRaw(BaseModel):
     event_url: str
     status: str                          # "past" | "upcoming" | "cancelled"
     is_online: bool = False
-    venue_name: Optional[str] = None
-    venue_lat: Optional[float] = None
-    venue_lon: Optional[float] = None
+    venue_id: Optional[str] = None       # null for online/unnamed events
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
     rsvp_count: Optional[int] = None

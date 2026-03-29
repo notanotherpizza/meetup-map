@@ -3,7 +3,7 @@ worker/scraper.py
 ─────────────────
 Stateless worker: consumes GroupSeed messages, calls three Meetup gql2
 endpoints per group (groupHome, getPastGroupEvents, getUpcomingGroupEvents),
-geocodes via Postgres cache, and publishes GroupRaw + EventRaw messages.
+geocodes via Postgres cache, and publishes GroupRaw + VenueRaw + EventRaw messages.
 
 Multiple workers run in parallel — all state lives in Postgres/Kafka.
 
@@ -14,6 +14,7 @@ import asyncio
 import os
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -22,7 +23,7 @@ import psycopg
 
 from shared.geocoding import COUNTRY_CODE_TO_NAME, NOMINATIM_URL, NOMINATIM_DELAY
 from shared.kafka_client import make_consumer, make_producer, publish
-from shared.models import EventRaw, GroupRaw, GroupSeed
+from shared.models import EventRaw, GroupRaw, GroupSeed, VenueRaw
 from shared.settings import Settings
 
 logging.basicConfig(
@@ -42,6 +43,15 @@ HEADERS = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (compatible; meetupmap-worker/0.1)",
 }
+
+# Regex patterns for common postcode formats
+POSTCODE_PATTERNS = [
+    re.compile(r"^[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}$", re.I),  # UK: EC4R 3AD
+    re.compile(r"^\d{5}(-\d{4})?$"),                                  # US: 10001 / 10001-1234
+    re.compile(r"^[A-Z]\d[A-Z]\s*\d[A-Z]\d$", re.I),                # CA: M5V 3A8
+    re.compile(r"^\d{4}\s?[A-Z]{2}$", re.I),                         # NL: 1234 AB
+    re.compile(r"^\d{4,5}$"),                                          # DE/FR/AU: 10115
+]
 
 
 # ── Meetup API ────────────────────────────────────────────────────────────────
@@ -64,11 +74,6 @@ async def gql(client, operation, variables, hash_):
 
 
 async def fetch_group_home(urlname: str, client: httpx.AsyncClient) -> dict:
-    """
-    Per-group metadata: member count, city, country, lat, lon, event counts.
-    Uses the groupHome persisted query — same query Meetup fires on group pages.
-    Returns {} on failure so callers fall back to seed data.
-    """
     try:
         data = await gql(client, "groupHome",
                          {"urlname": urlname, "includePrivateInfo": False},
@@ -132,14 +137,38 @@ def _is_high_precision(lat, lon) -> bool:
     return lat_dp > 2 or lon_dp > 2
 
 
+def _looks_like_postcode(s: str) -> bool:
+    """Returns True if the string matches a known postcode pattern."""
+    return any(p.match(s.strip()) for p in POSTCODE_PATTERNS)
+
+
+def _nominatim_lookup(query: str) -> tuple[float | None, float | None, str | None]:
+    """Single Nominatim lookup — returns (lat, lon, display_name)."""
+    import time
+    try:
+        resp = httpx.get(
+            NOMINATIM_URL,
+            params={"q": query, "format": "json", "limit": 1},
+            headers={"User-Agent": "meetupmap/0.1 (github.com/notanotherpizza/meetup-map)"},
+            timeout=10,
+        )
+        results = resp.json()
+        time.sleep(NOMINATIM_DELAY)
+        if results:
+            return float(results[0]["lat"]), float(results[0]["lon"]), results[0].get("display_name")
+        return None, None, None
+    except Exception as exc:
+        log.warning("  Nominatim error for '%s': %s", query, exc)
+        return None, None, None
+
+
 def resolve_coords(seed: GroupSeed, pg: psycopg.Connection) -> tuple:
     """
-    Three-level coordinate resolution — all state in Postgres:
+    Three-level coordinate resolution for groups — all state in Postgres.
     1. groups table: group already has geocoded coords from a previous run
     2. geocode_cache table: city already geocoded for another group
     3. Nominatim API: genuine miss — write result back to geocode_cache
     """
-    # Level 1: existing high-precision coords for this group
     with pg.cursor() as cur:
         cur.execute("SELECT lat, lon FROM groups WHERE id = %s", (seed.group_urlname,))
         row = cur.fetchone()
@@ -147,7 +176,6 @@ def resolve_coords(seed: GroupSeed, pg: psycopg.Connection) -> tuple:
             log.debug("  L1 coords (groups): %s", seed.group_urlname)
             return row[0], row[1]
 
-    # Level 2: city already in geocode_cache
     query = _geocode_query(seed.city, seed.country)
     if query:
         with pg.cursor() as cur:
@@ -160,40 +188,94 @@ def resolve_coords(seed: GroupSeed, pg: psycopg.Connection) -> tuple:
     if not query:
         return seed.lat, seed.lon
 
-    # Level 3: Nominatim
-    import time
-    try:
-        resp = httpx.get(
-            NOMINATIM_URL,
-            params={"q": query, "format": "json", "limit": 1, "featuretype": "city"},
-            headers={"User-Agent": "meetupmap/0.1 (github.com/notanotherpizza/meetup-map)"},
-            timeout=10,
+    lat, lon, display = _nominatim_lookup(query)
+    if lat:
+        log.info("  L3 Nominatim (group): %s -> (%.4f, %.4f)", query, lat, lon)
+    else:
+        log.warning("  L3 Nominatim miss (group): %s", query)
+
+    with pg.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geocode_cache (query, lat, lon, display_name) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (query) DO NOTHING",
+            (query, lat, lon, display),
         )
-        results = resp.json()
-        time.sleep(NOMINATIM_DELAY)
+    pg.commit()
+    return lat or seed.lat, lon or seed.lon
 
-        if results:
-            lat = float(results[0]["lat"])
-            lon = float(results[0]["lon"])
-            display = results[0].get("display_name", "")
-            log.info("  L3 Nominatim: %s → (%.4f, %.4f)", query, lat, lon)
-        else:
-            lat = lon = None
-            display = None
-            log.warning("  L3 Nominatim miss: %s", query)
 
-        with pg.cursor() as cur:
-            cur.execute(
-                "INSERT INTO geocode_cache (query, lat, lon, display_name) "
-                "VALUES (%s, %s, %s, %s) ON CONFLICT (query) DO NOTHING",
-                (query, lat, lon, display),
-            )
-        pg.commit()
-        return lat or seed.lat, lon or seed.lon
+def resolve_venue_coords(
+    venue_id: str,
+    name: str | None,
+    address: str | None,
+    city: str | None,
+    state: str | None,
+    country: str | None,
+    pg: psycopg.Connection,
+) -> tuple[float | None, float | None, str, str]:
+    """
+    Geocode a venue — returns (lat, lon, geocode_source, geocode_query).
 
-    except Exception as exc:
-        log.warning("  Nominatim error for %s: %s", query, exc)
-        return seed.lat, seed.lon
+    Priority:
+    1. Already in venues table — return cached coords immediately
+    2. Name looks like a postcode — geocode "POSTCODE, country"
+    3. Address is set — geocode "address, city, country"
+    4. Fall back to city + country (same as group geocoding)
+
+    All results written to geocode_cache keyed by the query string,
+    so the same postcode/address hit by another group gets a cache hit.
+    """
+    # L1: already geocoded this venue
+    with pg.cursor() as cur:
+        cur.execute("SELECT lat, lon, geocode_source, geocode_query FROM venues WHERE id = %s",
+                    (venue_id,))
+        row = cur.fetchone()
+        if row and row[0] is not None:
+            log.debug("  venue L1 cache hit: %s", venue_id)
+            return row[0], row[1], row[2], row[3]
+
+    country_name = COUNTRY_CODE_TO_NAME.get((country or "").lower(), (country or "").upper())
+
+    # L2: name looks like a postcode
+    if name and _looks_like_postcode(name):
+        query = f"{name.strip()}, {country_name}" if country_name else name.strip()
+        source = "postcode"
+    # L3: address is set and meaningful
+    elif address and len(address.strip()) > 3:
+        parts = [p for p in [address.strip(), city, country_name] if p]
+        query = ", ".join(parts)
+        source = "address"
+    # L4: fall back to city + country
+    elif city:
+        query = f"{city}, {country_name}" if country_name else city
+        source = "city"
+    else:
+        return None, None, "miss", None
+
+    # Check geocode_cache before hitting Nominatim
+    with pg.cursor() as cur:
+        cur.execute("SELECT lat, lon FROM geocode_cache WHERE query = %s", (query,))
+        row = cur.fetchone()
+        if row is not None:
+            log.debug("  venue L2 geocode_cache: %s", query)
+            return row[0], row[1], source, query
+
+    # Hit Nominatim
+    lat, lon, display = _nominatim_lookup(query)
+    if lat:
+        log.info("  venue Nominatim: %s -> (%.4f, %.4f) [%s]", query, lat, lon, source)
+    else:
+        log.warning("  venue Nominatim miss: %s", query)
+        source = "miss"
+
+    with pg.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geocode_cache (query, lat, lon, display_name) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (query) DO NOTHING",
+            (query, lat, lon, display),
+        )
+    pg.commit()
+    return lat, lon, source, query
 
 
 # ── Message builders ──────────────────────────────────────────────────────────
@@ -226,7 +308,50 @@ def build_group_raw(
     )
 
 
-def build_event_raw(seed: GroupSeed, event: dict, status: str) -> EventRaw | None:
+def build_venue_raw(
+    venue: dict,
+    pg: psycopg.Connection,
+    now: datetime,
+) -> VenueRaw | None:
+    """
+    Build a VenueRaw from a Meetup venue object, geocoding if needed.
+    Returns None if the venue has no ID.
+    """
+    venue_id = str(venue.get("id", "")).strip()
+    if not venue_id:
+        return None
+
+    name    = venue.get("name") or None
+    address = venue.get("address") or None
+    city    = venue.get("city") or None
+    state   = venue.get("state") or None
+    country = venue.get("country") or None
+
+    lat, lon, geocode_source, geocode_query = resolve_venue_coords(
+        venue_id, name, address, city, state, country, pg
+    )
+
+    return VenueRaw(
+        venue_id=venue_id,
+        name=name,
+        address=address,
+        city=city,
+        state=state,
+        country=country,
+        lat=lat,
+        lon=lon,
+        geocode_source=geocode_source,
+        geocode_query=geocode_query,
+        scraped_at=now,
+    )
+
+
+def build_event_raw(
+    seed: GroupSeed,
+    event: dict,
+    status: str,
+    now: datetime,
+) -> EventRaw | None:
     event_id = str(event.get("id", ""))
     if not event_id:
         return None
@@ -239,11 +364,17 @@ def build_event_raw(seed: GroupSeed, event: dict, status: str) -> EventRaw | Non
             pass
 
     venue = event.get("venue") or {}
+    venue_id = str(venue.get("id", "")).strip() or None
+
     is_online = (
         event.get("isOnline", False)
         or event.get("venueType") == "ONLINE"
         or "online" in (venue.get("name") or "").lower()
     )
+    # Online events have no meaningful venue
+    if is_online:
+        venue_id = None
+
     going = event.get("going") or {}
     rsvp_count = going.get("totalCount") if isinstance(going, dict) else None
 
@@ -254,12 +385,10 @@ def build_event_raw(seed: GroupSeed, event: dict, status: str) -> EventRaw | Non
         event_url=event.get("eventUrl", ""),
         status=status,
         is_online=is_online,
-        venue_name=venue.get("name"),
-        venue_lat=venue.get("lat"),
-        venue_lon=venue.get("lon"),
+        venue_id=venue_id,
         starts_at=starts_at,
         rsvp_count=rsvp_count,
-        scraped_at=datetime.now(timezone.utc),
+        scraped_at=now,
         scrape_method="gql2",
     )
 
@@ -276,12 +405,10 @@ async def process_seed(
     log.info("Processing: %s", seed.group_urlname)
     t_start = asyncio.get_event_loop().time()
 
-    # Fire groupHome concurrently with events queries.
-    # Events are caught independently — a failure sets events_scrape_ok=False
-    # but still allows the group record to be written with last_scraped_at set.
     events_scrape_ok = False
     past: list[dict] = []
     upcoming: list[dict] = []
+    group_home: dict = {}
 
     try:
         group_home, (past, upcoming) = await asyncio.gather(
@@ -290,7 +417,6 @@ async def process_seed(
         )
         events_scrape_ok = True
     except Exception as exc:
-        # Events fetch failed — try group_home alone so we at least write the group
         log.warning("  Events fetch failed for %s: %s — will still write group record",
                     seed.group_urlname, exc)
         try:
@@ -298,15 +424,15 @@ async def process_seed(
         except Exception:
             group_home = {}
 
-    log.info("  → %d past, %d upcoming events | members: %s | events_ok: %s",
+    log.info("  -> %d past, %d upcoming events | members: %s | events_ok: %s",
              len(past), len(upcoming),
              (group_home.get("stats") or {}).get("memberCounts", {}).get("all", "?"),
              events_scrape_ok)
 
-    # Geocode — Postgres-backed, no local state
     lat, lon = resolve_coords(seed, pg)
+    now = datetime.now(timezone.utc)
 
-    # Publish group — always, even if events failed
+    # Publish group
     publish(
         producer,
         topic=settings.topic_groups_raw,
@@ -314,26 +440,48 @@ async def process_seed(
         key=seed.group_urlname,
     )
 
-    # Publish events — only if scrape succeeded
-    published = 0
-    for event in past:
-        er = build_event_raw(seed, event, "past")
-        if er:
-            publish(producer, topic=settings.topic_events_raw,
-                    value=er.model_dump(mode="json"),
-                    key=f"{seed.group_urlname}:{er.event_id}")
-            published += 1
-    for event in upcoming:
-        er = build_event_raw(seed, event, "upcoming")
-        if er:
-            publish(producer, topic=settings.topic_events_raw,
-                    value=er.model_dump(mode="json"),
-                    key=f"{seed.group_urlname}:{er.event_id}")
-            published += 1
+    # Publish venues + events
+    # Venues are published before their events so the sink can write them first,
+    # avoiding FK violations on events.venue_id.
+    published_venues: set[str] = set()  # dedup within this group's batch
+    published_events = 0
 
-    log.info("  → Published 1 group + %d events for %s", published, seed.group_urlname)
+    for event in past + upcoming:
+        status = "past" if event in past else "upcoming"
+        venue = event.get("venue") or {}
+        venue_id = str(venue.get("id", "")).strip()
+        is_online = (
+            event.get("isOnline", False)
+            or event.get("venueType") == "ONLINE"
+            or "online" in (venue.get("name") or "").lower()
+        )
 
-    # Write telemetry to scrape_log
+        # Publish VenueRaw once per unique venue_id per batch
+        if venue_id and not is_online and venue_id not in published_venues:
+            vr = build_venue_raw(venue, pg, now)
+            if vr:
+                publish(
+                    producer,
+                    topic=settings.topic_venues_raw,
+                    value=vr.model_dump(mode="json"),
+                    key=vr.venue_id,
+                )
+                published_venues.add(venue_id)
+
+        er = build_event_raw(seed, event, status, now)
+        if er:
+            publish(
+                producer,
+                topic=settings.topic_events_raw,
+                value=er.model_dump(mode="json"),
+                key=f"{seed.group_urlname}:{er.event_id}",
+            )
+            published_events += 1
+
+    log.info("  -> Published 1 group + %d venues + %d events for %s",
+             len(published_venues), published_events, seed.group_urlname)
+
+    # Telemetry
     run_id = os.environ.get("RUN_ID")
     worker_id = os.environ.get("WORKER_ID", __import__("socket").gethostname())
     duration_ms = int((asyncio.get_event_loop().time() - t_start) * 1000)
@@ -348,7 +496,7 @@ async def process_seed(
                 worker_id,
                 seed.group_urlname,
                 seed.pro_network,
-                published,
+                published_events,
                 duration_ms,
             ))
         pg.commit()
@@ -363,11 +511,11 @@ async def run(settings: Settings) -> None:
     consumer = make_consumer(settings, group_id="meetupmap-workers",
                              topics=[settings.topic_groups_to_scrape])
     producer = make_producer(settings)
-    log.info("Worker started. Listening on '%s'…", settings.topic_groups_to_scrape)
+    log.info("Worker started. Listening on '%s'...", settings.topic_groups_to_scrape)
 
     drain_mode = os.environ.get("DRAIN_MODE", "").lower() == "true"
     empty_polls = 0
-    empty_polls_needed = 3  # 3 × 5s = 15s of silence = topic is drained
+    empty_polls_needed = 3
 
     with psycopg.connect(settings.postgres_uri) as pg:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -377,12 +525,12 @@ async def run(settings: Settings) -> None:
                     if msg is None:
                         if drain_mode:
                             empty_polls += 1
-                            log.info("No messages (%d/%d)…", empty_polls, empty_polls_needed)
+                            log.info("No messages (%d/%d)...", empty_polls, empty_polls_needed)
                             if empty_polls >= empty_polls_needed:
                                 log.info("Topic drained — exiting.")
                                 break
                         continue
-                    empty_polls = 0  # reset on any message
+                    empty_polls = 0
                     if msg.error():
                         log.error("Kafka error: %s", msg.error())
                         continue
@@ -396,7 +544,7 @@ async def run(settings: Settings) -> None:
                         log.error("Failed to process %s: %s",
                                   msg.key(), exc, exc_info=True)
             except KeyboardInterrupt:
-                log.info("Shutting down…")
+                log.info("Shutting down...")
             finally:
                 consumer.close()
 

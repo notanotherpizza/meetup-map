@@ -24,6 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 DOCS_DIR = Path("docs")
 
+
 def network_colour(network: str) -> str:
     """Deterministic colour from network name — same network always same colour."""
     h = int(hashlib.md5(network.encode()).hexdigest()[:8], 16)
@@ -49,31 +50,44 @@ def fetch_groups(pg: psycopg.Connection) -> list[dict]:
                 g.events_scraped_at,
                 COUNT(e.id)                                         AS total_events,
                 COUNT(e.id) FILTER (WHERE e.status = 'upcoming')   AS upcoming_events,
-                -- Last past event with a valid venue location
                 MAX(e.starts_at) FILTER (
                     WHERE e.status = 'past'
                 )                                                   AS last_event_at,
-                -- Lat/lon of the most recent past event that has venue coords
+                -- Coords from the most recent past event with a geocoded venue
                 (
-                    SELECT e2.venue_lat
+                    SELECT v.lat
                     FROM events e2
+                    JOIN venues v ON v.id = e2.venue_id
                     WHERE e2.group_id = g.id
                       AND e2.status = 'past'
-                      AND e2.venue_lat IS NOT NULL
-                      AND e2.venue_lon IS NOT NULL
+                      AND v.lat IS NOT NULL
+                      AND v.lon IS NOT NULL
                     ORDER BY e2.starts_at DESC
                     LIMIT 1
                 )                                                   AS last_event_lat,
                 (
-                    SELECT e2.venue_lon
+                    SELECT v.lon
                     FROM events e2
+                    JOIN venues v ON v.id = e2.venue_id
                     WHERE e2.group_id = g.id
                       AND e2.status = 'past'
-                      AND e2.venue_lat IS NOT NULL
-                      AND e2.venue_lon IS NOT NULL
+                      AND v.lat IS NOT NULL
+                      AND v.lon IS NOT NULL
                     ORDER BY e2.starts_at DESC
                     LIMIT 1
-                )                                                   AS last_event_lon
+                )                                                   AS last_event_lon,
+                -- Geocode source of that venue (for display in popup)
+                (
+                    SELECT v.geocode_source
+                    FROM events e2
+                    JOIN venues v ON v.id = e2.venue_id
+                    WHERE e2.group_id = g.id
+                      AND e2.status = 'past'
+                      AND v.lat IS NOT NULL
+                      AND v.lon IS NOT NULL
+                    ORDER BY e2.starts_at DESC
+                    LIMIT 1
+                )                                                   AS last_event_geocode_source
             FROM groups g
             LEFT JOIN events e ON e.group_id = g.id
             WHERE g.lat IS NOT NULL AND g.lon IS NOT NULL
@@ -124,10 +138,11 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
         )
         base_lat = g["last_event_lat"] if use_event_location else g["lat"]
         base_lon = g["last_event_lon"] if use_event_location else g["lon"]
+        geocode_source = g["last_event_geocode_source"] if use_event_location else "group"
 
-        # Deterministic jitter — only apply for group-level geocoded coords,
-        # not for precise venue coords which are already distinct
-        if use_event_location:
+        # Deterministic jitter only for city-level group geocodes.
+        # Venue coords (postcode/address) are precise enough to plot directly.
+        if use_event_location and geocode_source in ("postcode", "address"):
             lat = round(base_lat, 6)
             lon = round(base_lon, 6)
         else:
@@ -166,7 +181,8 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
             "url": g["meetup_url"] or "",
             "network": g["pro_network"] or "",
             "color": colour_map.get(g["pro_network"] or "", "#8b5cf6"),
-            "event_location": use_event_location,  # true = pinned to venue, false = city geocode
+            "event_location": use_event_location,
+            "geocode_source": geocode_source,  # 'postcode'|'address'|'city'|'group'
             "event_status": event_status,
         })
 
@@ -222,9 +238,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   padding: 3px 6px; font-size: 11px; margin-bottom: 6px;
   outline: none;
 }}
-#legend-list {{
-  overflow-y: auto; flex: 1; line-height: 1.9;
-}}
+#legend-list {{ overflow-y: auto; flex: 1; line-height: 1.9; }}
 .legend-item {{
   cursor: pointer; padding: 1px 2px; border-radius: 3px;
   display: flex; align-items: center; gap: 6px;
@@ -232,16 +246,13 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
 }}
 .legend-item:hover {{ background: #f5f5f5; }}
 .legend-item.dimmed {{ opacity: 0.35; }}
-.legend-dot {{
-  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
-}}
+.legend-dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
 .legend-label {{ font-size: 11px; flex: 1; }}
 .legend-count {{ font-size: 10px; color: #999; }}
 #legend-clear {{
   font-size: 10px; color: #2563eb; cursor: pointer;
   margin-top: 4px; text-align: center; display: none;
 }}
-/* Map key for event status indicators */
 #map-key {{
   position: absolute; bottom: 24px; right: 12px; z-index: 1000;
   background: rgba(255,255,255,0.95);
@@ -252,10 +263,6 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
 #map-key-title {{ font-weight: 600; font-size: 12px; margin-bottom: 4px; }}
 .key-item {{ display: flex; align-items: center; gap: 6px; }}
 .key-dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
-.key-ring {{
-  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
-  border: 2px solid currentColor; background: transparent;
-}}
 .leaflet-popup-content {{ font-size: 13px; line-height: 1.5; min-width: 180px; }}
 .popup-name {{ font-weight: 600; font-size: 14px; margin-bottom: 4px; }}
 .popup-url {{ color: #2563eb; text-decoration: none; font-size: 12px; }}
@@ -281,14 +288,15 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
     Networks
     <span style="color:#999;font-weight:400;font-size:11px">{len(networks)}</span>
   </div>
-  <input id="legend-search" type="text" placeholder="Filter networks…" />
+  <input id="legend-search" type="text" placeholder="Filter networks..." />
   <div id="legend-list"></div>
   <div id="legend-clear" onclick="clearFilter()">Show all</div>
 </div>
 <div id="map-key">
   <div id="map-key-title">Location source</div>
-  <div class="key-item"><div class="key-dot" style="background:#6366f1"></div> Pinned to last event venue</div>
-  <div class="key-item"><div class="key-dot" style="background:#9ca3af"></div> City-level geocode only</div>
+  <div class="key-item"><div class="key-dot" style="background:#6366f1"></div> Postcode geocoded</div>
+  <div class="key-item"><div class="key-dot" style="background:#06b6d4"></div> Address geocoded</div>
+  <div class="key-item"><div class="key-dot" style="background:#9ca3af"></div> City-level only</div>
   <div id="map-key-title" style="margin-top:8px">Event data</div>
   <div class="key-item"><div class="key-dot" style="background:#22c55e"></div> Has events</div>
   <div class="key-item"><div class="key-dot" style="background:#f59e0b"></div> Scraped — no events found</div>
@@ -309,28 +317,39 @@ L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
 
 const clusters = L.markerClusterGroup({{ maxClusterRadius: 40, disableClusteringAtZoom: 8 }});
 const markers = [];
-let activeNetworks = null; // null = all visible
+let activeNetworks = null;
 
 function markerStyle(g) {{
-  // Colour encodes event status; opacity encodes location precision
-  let fillColor, fillOpacity, dashArray;
+  let fillColor, fillOpacity, dashArray, weight;
+
   if (g.event_status === 'unscraped') {{
-    fillColor = '#9ca3af';
-    fillOpacity = 0.4;
-    dashArray = '3,3';  // dashed outline = uncertain
+    fillColor = '#9ca3af'; fillOpacity = 0.4; dashArray = '3,3'; weight = 0.5;
+  }} else if (g.event_status === 'events_failed') {{
+    fillColor = '#ef4444'; fillOpacity = 0.7; dashArray = '3,3'; weight = 0.5;
   }} else if (g.event_status === 'no_events') {{
-    fillColor = '#f59e0b';
-    fillOpacity = 0.75;
-    dashArray = null;
+    fillColor = '#f59e0b'; fillOpacity = 0.75; dashArray = null; weight = 0.5;
   }} else {{
-    // ok — use network colour, full opacity for venue-pinned, slightly less for geocoded
+    // ok — colour by location precision, use network colour at full opacity
     fillColor = g.color;
-    fillOpacity = g.event_location ? 0.9 : 0.6;
+    fillOpacity = g.geocode_source === 'postcode' ? 0.95
+                : g.geocode_source === 'address'  ? 0.85
+                : 0.6;
     dashArray = null;
+    weight = g.geocode_source === 'postcode' ? 1.5
+           : g.geocode_source === 'address'  ? 1.0
+           : 0.5;
   }}
+
   const size = Math.max(6, Math.min(14, 6 + Math.log1p(g.members) * 0.8));
-  return {{ radius: size, fillColor, color: 'white', weight: g.event_location ? 1.5 : 0.5,
+  return {{ radius: size, fillColor, color: 'white', weight: weight || 0.5,
             fillOpacity, dashArray }};
+}}
+
+function locationLabel(g) {{
+  if (!g.event_location) return '<div class="popup-meta" style="color:#9ca3af;font-size:11px">📍 City-level location</div>';
+  if (g.geocode_source === 'postcode') return '<div class="popup-meta" style="color:#6366f1;font-size:11px">📍 Postcode geocoded</div>';
+  if (g.geocode_source === 'address')  return '<div class="popup-meta" style="color:#06b6d4;font-size:11px">📍 Address geocoded</div>';
+  return '<div class="popup-meta" style="color:#9ca3af;font-size:11px">📍 City-level location</div>';
 }}
 
 function popupHtml(g) {{
@@ -347,17 +366,13 @@ function popupHtml(g) {{
     statusTag = '<span class="tag-no-events">No events found</span> ';
   }}
 
-  const locationNote = g.event_location
-    ? '<div class="popup-meta" style="color:#6366f1;font-size:11px">📍 Pinned to last event venue</div>'
-    : '<div class="popup-meta" style="color:#9ca3af;font-size:11px">📍 City-level location</div>';
-
   return `
     <div class="popup-name">${{g.name}}</div>
     <div class="popup-meta">${{g.city}}${{g.city && g.country ? ', ' : ''}}${{g.country}}</div>
     <div class="popup-meta" style="color:${{g.color}}">${{g.network}}</div>
     <div class="popup-meta">${{members}}${{g.total_events}} events</div>
     <div class="popup-meta" style="margin-top:4px">${{statusTag}}${{upcoming}}${{g.event_status === 'ok' ? last : ''}}</div>
-    ${{locationNote}}
+    ${{locationLabel(g)}}
     ${{g.url ? `<div style="margin-top:6px"><a class="popup-url" href="${{g.url}}" target="_blank">View on Meetup →</a></div>` : ''}}
   `;
 }}
@@ -432,7 +447,7 @@ def main() -> None:
     settings = Settings.from_env()
     DOCS_DIR.mkdir(exist_ok=True)
 
-    log.info("Connecting to Postgres…")
+    log.info("Connecting to Postgres...")
     with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as pg:
         groups = fetch_groups(pg)
         networks = fetch_networks(pg)

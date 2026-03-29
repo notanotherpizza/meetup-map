@@ -440,6 +440,46 @@ async def process_seed(
         key=seed.group_urlname,
     )
 
+    # Identify which venues need full geocoding vs raw-only:
+    # - Most recent past event venue → geocode (this is what the map plots)
+    # - Upcoming event venues → geocode (precise coords for future events)
+    # - All other past event venues → raw fields only, skip Nominatim
+    #
+    # Sort past events by dateTime descending to find the most recent
+    past_sorted = sorted(
+        past,
+        key=lambda e: e.get("dateTime") or "",
+        reverse=True,
+    )
+    most_recent_past_venue_id = None
+    for e in past_sorted:
+        v = e.get("venue") or {}
+        vid = str(v.get("id", "")).strip()
+        is_online = (
+            e.get("isOnline", False)
+            or e.get("venueType") == "ONLINE"
+            or "online" in (v.get("name") or "").lower()
+        )
+        if vid and not is_online:
+            most_recent_past_venue_id = vid
+            break
+
+    upcoming_venue_ids = set()
+    for e in upcoming:
+        v = e.get("venue") or {}
+        vid = str(v.get("id", "")).strip()
+        is_online = (
+            e.get("isOnline", False)
+            or e.get("venueType") == "ONLINE"
+            or "online" in (v.get("name") or "").lower()
+        )
+        if vid and not is_online:
+            upcoming_venue_ids.add(vid)
+
+    geocode_venue_ids = upcoming_venue_ids.copy()
+    if most_recent_past_venue_id:
+        geocode_venue_ids.add(most_recent_past_venue_id)
+
     # Publish venues + events
     # Venues are published before their events so the sink can write them first,
     # avoiding FK violations on events.venue_id.
@@ -458,7 +498,24 @@ async def process_seed(
 
         # Publish VenueRaw once per unique venue_id per batch
         if venue_id and not is_online and venue_id not in published_venues:
-            vr = build_venue_raw(venue, pg, now)
+            if venue_id in geocode_venue_ids:
+                # Full geocoding — most recent past venue or upcoming venue
+                vr = build_venue_raw(venue, pg, now)
+            else:
+                # Raw fields only — historical past venue, skip Nominatim
+                vr = VenueRaw(
+                    venue_id=venue_id,
+                    name=venue.get("name") or None,
+                    address=venue.get("address") or None,
+                    city=venue.get("city") or None,
+                    state=venue.get("state") or None,
+                    country=venue.get("country") or None,
+                    lat=None,
+                    lon=None,
+                    geocode_source=None,
+                    geocode_query=None,
+                    scraped_at=now,
+                )
             if vr:
                 publish(
                     producer,

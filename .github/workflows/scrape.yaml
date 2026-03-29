@@ -7,6 +7,10 @@ on:
         description: "Pro networks (space separated, or ALL)"
         default: "pydata"
 
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
 permissions:
   contents: write
 

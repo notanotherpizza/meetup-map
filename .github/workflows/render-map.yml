@@ -9,6 +9,10 @@ on:
   schedule:
     - cron: '0 * * * *'   # every hour
 
+concurrency:
+  group: render
+  cancel-in-progress: true
+
 permissions:
   contents: write
 

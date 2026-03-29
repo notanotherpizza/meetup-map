@@ -261,6 +261,8 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   line-height: 2;
 }}
 #map-key-title {{ font-weight: 600; font-size: 12px; margin-bottom: 4px; }}
+.filter-check {{ display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 11px; color: #444; }}
+.filter-check input {{ cursor: pointer; }}
 .key-item {{ display: flex; align-items: center; gap: 6px; }}
 .key-dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
 .leaflet-popup-content {{ font-size: 13px; line-height: 1.5; min-width: 180px; }}
@@ -293,15 +295,24 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   <div id="legend-clear" onclick="clearFilter()">Show all</div>
 </div>
 <div id="map-key">
-  <div id="map-key-title">Location source</div>
-  <div class="key-item"><div class="key-dot" style="background:#6366f1"></div> Postcode geocoded</div>
-  <div class="key-item"><div class="key-dot" style="background:#06b6d4"></div> Address geocoded</div>
-  <div class="key-item"><div class="key-dot" style="background:#9ca3af"></div> City-level only</div>
-  <div id="map-key-title" style="margin-top:8px">Event data</div>
+  <div id="map-key-title">Event data</div>
   <div class="key-item"><div class="key-dot" style="background:#22c55e"></div> Has events</div>
   <div class="key-item"><div class="key-dot" style="background:#f59e0b"></div> Scraped — no events found</div>
   <div class="key-item"><div class="key-dot" style="background:#ef4444"></div> Events fetch failed</div>
   <div class="key-item"><div class="key-dot" style="background:#9ca3af; opacity:0.5"></div> Not yet scraped</div>
+  <div id="map-key-title" style="margin-top:8px">Location source</div>
+  <div class="key-item">
+    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('postcode', this.checked)"> Postcode</label>
+  </div>
+  <div class="key-item">
+    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('address', this.checked)"> Address</label>
+  </div>
+  <div class="key-item">
+    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('city', this.checked)"> City-level</label>
+  </div>
+  <div class="key-item">
+    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('group', this.checked)"> Group geocode only</label>
+  </div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
@@ -318,6 +329,7 @@ L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
 const clusters = L.markerClusterGroup({{ maxClusterRadius: 40, disableClusteringAtZoom: 8 }});
 const markers = [];
 let activeNetworks = null;
+let activeLocationSources = new Set(['postcode', 'address', 'city', 'group', 'miss', null]);
 
 function markerStyle(g) {{
   let fillColor, fillOpacity, dashArray, weight;
@@ -329,15 +341,10 @@ function markerStyle(g) {{
   }} else if (g.event_status === 'no_events') {{
     fillColor = '#f59e0b'; fillOpacity = 0.75; dashArray = null; weight = 0.5;
   }} else {{
-    // ok — colour by location precision, use network colour at full opacity
     fillColor = g.color;
-    fillOpacity = g.geocode_source === 'postcode' ? 0.95
-                : g.geocode_source === 'address'  ? 0.85
-                : 0.6;
+    fillOpacity = 0.85;
     dashArray = null;
-    weight = g.geocode_source === 'postcode' ? 1.5
-           : g.geocode_source === 'address'  ? 1.0
-           : 0.5;
+    weight = 0.5;
   }}
 
   const size = Math.max(6, Math.min(14, 6 + Math.log1p(g.members) * 0.8));
@@ -382,6 +389,7 @@ GROUPS.forEach(g => {{
   const marker = L.circleMarker([g.lat, g.lon], style);
   marker.bindPopup(popupHtml(g), {{ maxWidth: 260 }});
   marker._network = g.network;
+  marker._geocodeSource = g.geocode_source;
   markers.push(marker);
   clusters.addLayer(marker);
 }});
@@ -391,7 +399,9 @@ function applyFilter() {{
   clusters.clearLayers();
   let count = 0;
   markers.forEach(m => {{
-    if (!activeNetworks || activeNetworks.has(m._network)) {{
+    const networkOk = !activeNetworks || activeNetworks.has(m._network);
+    const locationOk = activeLocationSources.has(m._geocodeSource);
+    if (networkOk && locationOk) {{
       clusters.addLayer(m);
       count++;
     }}
@@ -415,6 +425,18 @@ function toggleNetwork(name) {{
 
 function clearFilter() {{
   activeNetworks = null;
+  applyFilter();
+}}
+
+function toggleLocationFilter(source, enabled) {{
+  // 'city' checkbox also controls null/miss sources (groups with no venue data)
+  if (source === 'city') {{
+    if (enabled) {{ activeLocationSources.add('city'); activeLocationSources.add('miss'); activeLocationSources.add(null); }}
+    else         {{ activeLocationSources.delete('city'); activeLocationSources.delete('miss'); activeLocationSources.delete(null); }}
+  }} else {{
+    if (enabled) activeLocationSources.add(source);
+    else         activeLocationSources.delete(source);
+  }}
   applyFilter();
 }}
 

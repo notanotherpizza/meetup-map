@@ -54,7 +54,6 @@ class EventRaw(BaseModel):
     event_id: str
     group_urlname: str
     title: str
-    description: Optional[str] = None
     event_url: str
     status: str                          # "past" | "upcoming" | "cancelled"
     is_online: bool = False

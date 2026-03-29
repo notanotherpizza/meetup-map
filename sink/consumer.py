@@ -51,11 +51,11 @@ ON CONFLICT (id) DO UPDATE SET
 
 UPSERT_EVENT = """
 INSERT INTO events (
-    id, group_id, title, description, event_url, status,
+    id, group_id, title, event_url, status,
     is_online, venue_name, venue_lat, venue_lon,
     starts_at, ends_at, rsvp_count, last_scraped_at
 ) VALUES (
-    %(event_id)s, %(group_urlname)s, %(title)s, %(description)s,
+    %(event_id)s, %(group_urlname)s, %(title)s,
     %(event_url)s, %(status)s, %(is_online)s, %(venue_name)s,
     %(venue_lat)s, %(venue_lon)s, %(starts_at)s, %(ends_at)s,
     %(rsvp_count)s, %(scraped_at)s

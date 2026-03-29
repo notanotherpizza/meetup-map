@@ -249,7 +249,6 @@ def build_event_raw(seed: GroupSeed, event: dict, status: str) -> EventRaw | Non
         event_id=event_id,
         group_urlname=seed.group_urlname,
         title=event.get("title", ""),
-        description=event.get("description", ""),
         event_url=event.get("eventUrl", ""),
         status=status,
         is_online=is_online,

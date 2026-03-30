@@ -310,7 +310,8 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
 const GROUPS = {groups_json};
 const NETWORKS = {networks_json};
 
-const map = L.map('map').setView([20, 10], 2);
+const renderer = L.svg({ padding: 0.5 });
+const map = L.map('map', { renderer }).setView([20, 10], 2);
 L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   maxZoom: 19
@@ -320,7 +321,7 @@ const clusters = L.markerClusterGroup({{
   // Never disable clustering — spiderfy handles exact overlaps at all zoom levels.
   // When all markers in a cluster share the same coordinates, zoomToBoundsOnClick
   // has nowhere to zoom, so the cluster fires spiderfy instead.
-  maxClusterRadius: 60,
+  maxClusterRadius: 20,
   spiderfyOnMaxZoom: true,
   spiderfyDistanceMultiplier: 2.5,
   zoomToBoundsOnClick: true,
@@ -358,9 +359,17 @@ function markerStyle(g) {{
     weight = 0.5;
   }}
 
-  const size = Math.max(6, Math.min(14, 6 + Math.log1p(g.members) * 0.8));
-  return {{ radius: size, fillColor, color: 'white', weight: weight || 0.5,
-            fillOpacity, dashArray }};
+  // Smooth continuous size — avoids integer-step jumps that cause pixelation
+  const size = Math.max(5, Math.min(16, 5 + Math.log1p(g.members) * 0.9));
+  return {{
+    radius: size,
+    fillColor,
+    color: 'white',
+    weight: weight || 0.8,
+    fillOpacity,
+    dashArray,
+    renderer,
+  }};
 }}
 
 function locationLabel(g) {{

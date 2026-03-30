@@ -317,13 +317,26 @@ L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
 }}).addTo(map);
 
 const clusters = L.markerClusterGroup({{
-  // Keep clustering until street level so city-stacked markers stay grouped.
-  // At zoom 16 (building level) spiderfy kicks in for exact overlaps.
+  // Never disable clustering — spiderfy handles exact overlaps at all zoom levels.
+  // When all markers in a cluster share the same coordinates, zoomToBoundsOnClick
+  // has nowhere to zoom, so the cluster fires spiderfy instead.
   maxClusterRadius: 60,
-  disableClusteringAtZoom: 16,
   spiderfyOnMaxZoom: true,
-  spiderfyDistanceMultiplier: 2,
+  spiderfyDistanceMultiplier: 2.5,
   zoomToBoundsOnClick: true,
+}});
+
+// When a cluster is clicked and all its child markers share the same latlng,
+// zoom-to-bounds won't help — spiderfy immediately instead.
+clusters.on('clusterclick', function(e) {{
+  const childMarkers = e.layer.getAllChildMarkers();
+  const latlngs = childMarkers.map(m => m.getLatLng());
+  const allSame = latlngs.every(ll =>
+    ll.lat === latlngs[0].lat && ll.lng === latlngs[0].lng
+  );
+  if (allSame) {{
+    e.layer.spiderfy();
+  }}
 }});
 const markers = [];
 let activeNetworks = null;

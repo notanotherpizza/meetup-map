@@ -310,7 +310,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
 const GROUPS = {groups_json};
 const NETWORKS = {networks_json};
 
-const renderer = L.svg({ padding: 0.5 });
+const renderer = L.svg({{ padding: 0.5 }});
 const map = L.map('map', { renderer }).setView([20, 10], 2);
 L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -368,7 +368,6 @@ function markerStyle(g) {{
     weight: weight || 0.8,
     fillOpacity,
     dashArray,
-    renderer,
   }};
 }}
 
@@ -406,7 +405,7 @@ function popupHtml(g) {{
 
 GROUPS.forEach(g => {{
   const style = markerStyle(g);
-  const marker = L.circleMarker([g.lat, g.lon], style);
+  const marker = L.circleMarker([g.lat, g.lon], {{ ...style, renderer }});
   marker.bindPopup(popupHtml(g), {{ maxWidth: 260 }});
   marker._network = g.network;
   marker._geocodeSource = g.geocode_source;
@@ -479,6 +478,47 @@ document.getElementById('legend-search').addEventListener('input', e => {{
 }});
 
 renderLegend('');
+
+// ── URL parameter handling ─────────────────────────────────────────────────
+// Supports ?city=London, ?country=GB, ?network=pydata
+// Can combine: ?city=London&network=pydata
+// Case-insensitive matching on all params.
+(function() {{
+  const params = new URLSearchParams(window.location.search);
+  const cityParam    = (params.get('city')    || '').toLowerCase().trim();
+  const countryParam = (params.get('country') || '').toLowerCase().trim();
+  const networkParam = (params.get('network') || '').toLowerCase().trim();
+
+  if (!cityParam && !countryParam && !networkParam) return;
+
+  // Activate network filter if ?network= is set
+  if (networkParam) {{
+    const matched = NETWORKS.find(n => n.name.toLowerCase() === networkParam);
+    if (matched) {{
+      activeNetworks = new Set([matched.name]);
+      applyFilter();
+    }}
+  }}
+
+  // Collect markers that match city/country params
+  const matching = markers.filter(m => {{
+    const g = GROUPS[markers.indexOf(m)];
+    const cityMatch    = !cityParam    || (g.city    || '').toLowerCase().includes(cityParam);
+    const countryMatch = !countryParam || (g.country || '').toLowerCase() === countryParam.toUpperCase();
+    const networkMatch = !networkParam || (g.network || '').toLowerCase() === networkParam;
+    return cityMatch && countryMatch && networkMatch;
+  }});
+
+  if (matching.length === 0) return;
+
+  // Fit map to the matched markers with some padding
+  const latlngs = matching.map(m => m.getLatLng());
+  const bounds = L.latLngBounds(latlngs).pad(0.15);
+  map.fitBounds(bounds);
+
+  // Update visible count label to reflect the framed area
+  // (doesn't filter — just frames, all markers remain visible)
+}})();
 </script>
 </body>
 </html>"""

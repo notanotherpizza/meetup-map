@@ -285,6 +285,7 @@ def render(groups: list[dict], networks: list[dict], place_bounds: dict, generat
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<script defer src="https://stats.hughevans.dev/script.js" data-website-id="65f284cb-0ea3-4f4d-9f8e-3fd4742fc09c"></script>
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}

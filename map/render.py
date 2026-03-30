@@ -285,7 +285,6 @@ def render(groups: list[dict], networks: list[dict], place_bounds: dict, generat
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
-<script defer src="https://stats.hughevans.dev/script.js" data-website-id="65f284cb-0ea3-4f4d-9f8e-3fd4742fc09c"></script>
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
@@ -591,7 +590,10 @@ renderLegend('');
       [bb[0], bb[2]],
       [bb[1], bb[3]]
     );
-    map.fitBounds(bounds.pad(0.05));
+    // Cities: zoom in tighter by shrinking the bbox
+    // Countries: keep a small pad so edge groups aren't clipped
+    const pad = cityParam ? -0.3 : 0.05;
+    map.fitBounds(bounds.pad(pad));
   }} else if (cityParam || countryParam) {{
     console.warn('No cached bbox for:', cityParam || countryParam);
   }}

@@ -311,7 +311,7 @@ const GROUPS = {groups_json};
 const NETWORKS = {networks_json};
 
 const renderer = L.svg({{ padding: 0.5 }});
-const map = L.map('map', { renderer }).setView([20, 10], 2);
+const map = L.map('map', {{ renderer }}).setView([20, 10], 2);
 L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   maxZoom: 19
@@ -405,7 +405,7 @@ function popupHtml(g) {{
 
 GROUPS.forEach(g => {{
   const style = markerStyle(g);
-  const marker = L.circleMarker([g.lat, g.lon], {{ ...style, renderer }});
+  const marker = L.circleMarker([g.lat, g.lon], Object.assign({{}}, style, {{ renderer }}));
   marker.bindPopup(popupHtml(g), {{ maxWidth: 260 }});
   marker._network = g.network;
   marker._geocodeSource = g.geocode_source;

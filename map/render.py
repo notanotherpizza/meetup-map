@@ -11,9 +11,11 @@ import json
 import logging
 import hashlib
 import colorsys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 import psycopg
 from psycopg.rows import dict_row
 
@@ -23,6 +25,8 @@ log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 DOCS_DIR = Path("docs")
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_HEADERS = {"User-Agent": "meetupmap/0.1 (github.com/notanotherpizza/meetup-map)"}
 
 
 def network_colour(network: str) -> str:
@@ -97,7 +101,6 @@ def fetch_groups(pg: psycopg.Connection) -> list[dict]:
 
 
 def fetch_networks(pg: psycopg.Connection) -> list[dict]:
-    """Returns networks sorted by group count descending, with assigned colours."""
     with pg.cursor(row_factory=dict_row) as cur:
         cur.execute("""
             SELECT pro_network, count(*) as group_count
@@ -106,11 +109,99 @@ def fetch_networks(pg: psycopg.Connection) -> list[dict]:
             ORDER BY group_count DESC
         """)
         rows = cur.fetchall()
-
     return [
         {"name": row["pro_network"], "colour": network_colour(row["pro_network"]), "count": row["group_count"]}
         for row in rows
     ]
+
+
+def nominatim_bbox(query: str) -> tuple | None:
+    """Look up a place via Nominatim and return (min_lat, max_lat, min_lon, max_lon) or None."""
+    try:
+        resp = httpx.get(
+            NOMINATIM_URL,
+            params={"q": query, "format": "json", "limit": 1},
+            headers=NOMINATIM_HEADERS,
+            timeout=10,
+        )
+        results = resp.json()
+        time.sleep(1.1)  # Nominatim rate limit
+        if results and "boundingbox" in results[0]:
+            bb = results[0]["boundingbox"]
+            return (float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3]))
+    except Exception as e:
+        log.warning("Nominatim bbox lookup failed for '%s': %s", query, e)
+    return None
+
+
+def fetch_place_bounds(groups: list[dict], pg: psycopg.Connection) -> dict:
+    """
+    Build a lookup of place -> bbox for all unique cities and countries in the
+    groups data. Checks geocode_cache first, falls back to Nominatim for misses,
+    and writes results back to the cache.
+
+    Returns dict keyed by lowercase place name:
+      { "london": [min_lat, max_lat, min_lon, max_lon], ... }
+    """
+    from shared.geocoding import COUNTRY_CODE_TO_NAME
+
+    # Collect unique cities and countries
+    places: set[str] = set()
+    for g in groups:
+        if g["city"]:
+            places.add(g["city"].lower().strip())
+        if g["country"]:
+            # Store by country code (e.g. "gb") and full name (e.g. "united kingdom")
+            code = g["country"].lower().strip()
+            places.add(code)
+            name = COUNTRY_CODE_TO_NAME.get(code, "").lower()
+            if name:
+                places.add(name)
+
+    log.info("Looking up bboxes for %d unique places...", len(places))
+
+    bounds: dict = {}
+
+    # Check cache first
+    with pg.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT query, bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon
+            FROM geocode_cache
+            WHERE bbox_min_lat IS NOT NULL
+              AND query = ANY(%s)
+        """, (list(places),))
+        for row in cur.fetchall():
+            bounds[row["query"]] = [
+                row["bbox_min_lat"], row["bbox_max_lat"],
+                row["bbox_min_lon"], row["bbox_max_lon"],
+            ]
+
+    log.info("Cache hits: %d / %d", len(bounds), len(places))
+
+    # Nominatim for misses
+    misses = [p for p in places if p not in bounds]
+    log.info("Nominatim lookups needed: %d", len(misses))
+
+    for place in misses:
+        bb = nominatim_bbox(place)
+        if bb:
+            bounds[place] = list(bb)
+            # Write back to cache
+            with pg.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO geocode_cache (query, bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (query) DO UPDATE SET
+                        bbox_min_lat = EXCLUDED.bbox_min_lat,
+                        bbox_max_lat = EXCLUDED.bbox_max_lat,
+                        bbox_min_lon = EXCLUDED.bbox_min_lon,
+                        bbox_max_lon = EXCLUDED.bbox_max_lon
+                """, (place, bb[0], bb[1], bb[2], bb[3]))
+            pg.commit()
+            log.debug("Cached bbox for '%s'", place)
+
+    log.info("Place bounds ready: %d entries", len(bounds))
+    return bounds
 
 
 def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
@@ -131,9 +222,6 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
             except Exception:
                 pass
 
-        # Use last event venue coords if available, fall back to group geocode.
-        # No jitter applied anywhere — city-level groups cluster naturally via
-        # Leaflet.markercluster, venue-precise groups spiderfy on max zoom.
         use_event_location = (
             g["last_event_lat"] is not None and g["last_event_lon"] is not None
         )
@@ -179,10 +267,11 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
     return json.dumps(features, ensure_ascii=False)
 
 
-def render(groups: list[dict], networks: list[dict], generated_at: str) -> str:
+def render(groups: list[dict], networks: list[dict], place_bounds: dict, generated_at: str) -> str:
     colour_map = {n["name"]: n["colour"] for n in networks}
     groups_json = groups_to_js(groups, colour_map)
     networks_json = json.dumps(networks)
+    place_bounds_json = json.dumps(place_bounds)
     total = len(groups)
     total_members = sum(g["member_count"] or 0 for g in groups)
     total_events = sum(int(g["total_events_in_db"] or 0) for g in groups)
@@ -309,6 +398,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
 <script>
 const GROUPS = {groups_json};
 const NETWORKS = {networks_json};
+const PLACE_BOUNDS = {place_bounds_json};
 
 const renderer = L.svg({{ padding: 0.5 }});
 const map = L.map('map', {{ renderer }}).setView([20, 10], 2);
@@ -318,17 +408,12 @@ L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
 }}).addTo(map);
 
 const clusters = L.markerClusterGroup({{
-  // Never disable clustering — spiderfy handles exact overlaps at all zoom levels.
-  // When all markers in a cluster share the same coordinates, zoomToBoundsOnClick
-  // has nowhere to zoom, so the cluster fires spiderfy instead.
   maxClusterRadius: 20,
   spiderfyOnMaxZoom: true,
   spiderfyDistanceMultiplier: 2.5,
   zoomToBoundsOnClick: true,
 }});
 
-// When a cluster is clicked and all its child markers share the same latlng,
-// zoom-to-bounds won't help — spiderfy immediately instead.
 clusters.on('clusterclick', function(e) {{
   const childMarkers = e.layer.getAllChildMarkers();
   const latlngs = childMarkers.map(m => m.getLatLng());
@@ -339,13 +424,13 @@ clusters.on('clusterclick', function(e) {{
     e.layer.spiderfy();
   }}
 }});
+
 const markers = [];
 let activeNetworks = null;
 let activeLocationSources = new Set(['postcode', 'address', 'city', 'group', 'miss', null]);
 
 function markerStyle(g) {{
   let fillColor, fillOpacity, dashArray, weight;
-
   if (g.event_status === 'unscraped') {{
     fillColor = '#9ca3af'; fillOpacity = 0.4; dashArray = '3,3'; weight = 0.5;
   }} else if (g.event_status === 'events_failed') {{
@@ -358,8 +443,6 @@ function markerStyle(g) {{
     dashArray = null;
     weight = 0.5;
   }}
-
-  // Smooth continuous size — avoids integer-step jumps that cause pixelation
   const size = Math.max(5, Math.min(16, 5 + Math.log1p(g.members) * 0.9));
   return {{
     radius: size,
@@ -382,7 +465,6 @@ function popupHtml(g) {{
   const upcoming = g.upcoming > 0 ? `<span class="tag-upcoming">${{g.upcoming}} upcoming</span> ` : '';
   const last = g.days_inactive !== null ? `Last event ${{g.days_inactive}}d ago` : 'No past events';
   const members = g.members > 0 ? `${{g.members.toLocaleString()}} members · ` : '';
-
   let statusTag = '';
   if (g.event_status === 'unscraped') {{
     statusTag = '<span class="tag-unscraped">Not yet scraped</span> ';
@@ -391,7 +473,6 @@ function popupHtml(g) {{
   }} else if (g.event_status === 'no_events') {{
     statusTag = '<span class="tag-no-events">No events found</span> ';
   }}
-
   return `
     <div class="popup-name">${{g.name}}</div>
     <div class="popup-meta">${{g.city}}${{g.city && g.country ? ', ' : ''}}${{g.country}}</div>
@@ -481,9 +562,9 @@ document.getElementById('legend-search').addEventListener('input', e => {{
 renderLegend('');
 
 // ── URL parameter handling ─────────────────────────────────────────────────
-// Supports ?city=London, ?country=GB, ?network=pydata
-// Can combine: ?city=London&network=pydata
-// Case-insensitive matching on all params.
+// Supports ?city=London, ?country=gb, ?network=pydata
+// Bounding boxes are pre-baked from Postgres geocode_cache — no client-side
+// Nominatim calls needed.
 (function() {{
   const params = new URLSearchParams(window.location.search);
   const cityParam    = (params.get('city')    || '').toLowerCase().trim();
@@ -492,36 +573,27 @@ renderLegend('');
 
   if (!cityParam && !countryParam && !networkParam) return;
 
-  function applyUrlParams() {{
-    // Activate network filter if ?network= is set
-    if (networkParam) {{
-      const matched = NETWORKS.find(n => n.name.toLowerCase() === networkParam);
-      if (matched) {{
-        activeNetworks = new Set([matched.name]);
-        applyFilter();
-      }}
+  // Activate network filter
+  if (networkParam) {{
+    const matched = NETWORKS.find(n => n.name.toLowerCase() === networkParam);
+    if (matched) {{
+      activeNetworks = new Set([matched.name]);
+      applyFilter();
     }}
-
-    // Collect markers that match city/country params
-    const matching = markers.filter(m => {{
-      const g = m._group;
-      const cityMatch    = !cityParam    || (g.city    || '').toLowerCase().includes(cityParam);
-      const countryMatch = !countryParam || (g.country || '').toUpperCase() === countryParam.toUpperCase();
-      const networkMatch = !networkParam || (g.network || '').toLowerCase() === networkParam;
-      return cityMatch && countryMatch && networkMatch;
-    }});
-
-    if (matching.length === 0) return;
-
-    // Fit map to the matched markers with padding
-    const latlngs = matching.map(m => m.getLatLng());
-    const bounds = L.latLngBounds(latlngs).pad(0.15);
-    map.fitBounds(bounds);
   }}
 
-  // Wait for all markers to be added to the cluster layer before fitting bounds.
-  // whenReady fires too early with large datasets — a flat timeout is more reliable.
-  setTimeout(applyUrlParams, 500);
+  // Look up bbox — city takes priority over country if both supplied
+  const bb = PLACE_BOUNDS[cityParam] || PLACE_BOUNDS[countryParam];
+  if (bb) {{
+    // bb is [min_lat, max_lat, min_lon, max_lon]
+    const bounds = L.latLngBounds(
+      [bb[0], bb[2]],
+      [bb[1], bb[3]]
+    );
+    map.fitBounds(bounds.pad(0.05));
+  }} else if (cityParam || countryParam) {{
+    console.warn('No cached bbox for:', cityParam || countryParam);
+  }}
 }})();
 </script>
 </body>
@@ -536,11 +608,12 @@ def main() -> None:
     with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as pg:
         groups = fetch_groups(pg)
         networks = fetch_networks(pg)
+        place_bounds = fetch_place_bounds(groups, pg)
 
     log.info("Fetched %d groups across %d networks", len(groups), len(networks))
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    html = render(groups, networks, generated_at)
+    html = render(groups, networks, place_bounds, generated_at)
 
     out = DOCS_DIR / "index.html"
     out.write_text(html, encoding="utf-8")

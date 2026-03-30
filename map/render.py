@@ -492,33 +492,37 @@ renderLegend('');
 
   if (!cityParam && !countryParam && !networkParam) return;
 
-  // Activate network filter if ?network= is set
-  if (networkParam) {{
-    const matched = NETWORKS.find(n => n.name.toLowerCase() === networkParam);
-    if (matched) {{
-      activeNetworks = new Set([matched.name]);
-      applyFilter();
+  function applyUrlParams() {{
+    // Activate network filter if ?network= is set
+    if (networkParam) {{
+      const matched = NETWORKS.find(n => n.name.toLowerCase() === networkParam);
+      if (matched) {{
+        activeNetworks = new Set([matched.name]);
+        applyFilter();
+      }}
     }}
+
+    // Collect markers that match city/country params
+    const matching = markers.filter(m => {{
+      const g = m._group;
+      const cityMatch    = !cityParam    || (g.city    || '').toLowerCase().includes(cityParam);
+      const countryMatch = !countryParam || (g.country || '').toLowerCase() === countryParam.toUpperCase();
+      const networkMatch = !networkParam || (g.network || '').toLowerCase() === networkParam;
+      return cityMatch && countryMatch && networkMatch;
+    }});
+
+    if (matching.length === 0) return;
+
+    // Fit map to the matched markers with padding
+    const latlngs = matching.map(m => m.getLatLng());
+    const bounds = L.latLngBounds(latlngs).pad(0.15);
+    map.fitBounds(bounds);
   }}
 
-  // Collect markers that match city/country params
-  const matching = markers.filter(m => {{
-    const g = m._group;
-    const cityMatch    = !cityParam    || (g.city    || '').toLowerCase().includes(cityParam);
-    const countryMatch = !countryParam || (g.country || '').toLowerCase() === countryParam.toUpperCase();
-    const networkMatch = !networkParam || (g.network || '').toLowerCase() === networkParam;
-    return cityMatch && countryMatch && networkMatch;
+  // Wait for map to be fully ready before fitting bounds
+  map.whenReady(function() {{
+    setTimeout(applyUrlParams, 100);
   }});
-
-  if (matching.length === 0) return;
-
-  // Fit map to the matched markers with some padding
-  const latlngs = matching.map(m => m.getLatLng());
-  const bounds = L.latLngBounds(latlngs).pad(0.15);
-  map.fitBounds(bounds);
-
-  // Update visible count label to reflect the framed area
-  // (doesn't filter — just frames, all markers remain visible)
 }})();
 </script>
 </body>

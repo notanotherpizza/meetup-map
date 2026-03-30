@@ -506,7 +506,7 @@ renderLegend('');
     const matching = markers.filter(m => {{
       const g = m._group;
       const cityMatch    = !cityParam    || (g.city    || '').toLowerCase().includes(cityParam);
-      const countryMatch = !countryParam || (g.country || '').toLowerCase() === countryParam.toUpperCase();
+      const countryMatch = !countryParam || (g.country || '').toUpperCase() === countryParam.toUpperCase();
       const networkMatch = !networkParam || (g.network || '').toLowerCase() === networkParam;
       return cityMatch && countryMatch && networkMatch;
     }});
@@ -519,10 +519,9 @@ renderLegend('');
     map.fitBounds(bounds);
   }}
 
-  // Wait for map to be fully ready before fitting bounds
-  map.whenReady(function() {{
-    setTimeout(applyUrlParams, 100);
-  }});
+  // Wait for all markers to be added to the cluster layer before fitting bounds.
+  // whenReady fires too early with large datasets — a flat timeout is more reliable.
+  setTimeout(applyUrlParams, 500);
 }})();
 </script>
 </body>

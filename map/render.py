@@ -409,7 +409,7 @@ L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
 }}).addTo(map);
 
 const clusters = L.markerClusterGroup({{
-  maxClusterRadius: 20,
+  maxClusterRadius: 1,
   spiderfyOnMaxZoom: true,
   spiderfyDistanceMultiplier: 2.5,
   zoomToBoundsOnClick: true,

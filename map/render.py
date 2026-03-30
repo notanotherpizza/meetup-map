@@ -409,6 +409,7 @@ GROUPS.forEach(g => {{
   marker.bindPopup(popupHtml(g), {{ maxWidth: 260 }});
   marker._network = g.network;
   marker._geocodeSource = g.geocode_source;
+  marker._group = g;
   markers.push(marker);
   clusters.addLayer(marker);
 }});
@@ -502,7 +503,7 @@ renderLegend('');
 
   // Collect markers that match city/country params
   const matching = markers.filter(m => {{
-    const g = GROUPS[markers.indexOf(m)];
+    const g = m._group;
     const cityMatch    = !cityParam    || (g.city    || '').toLowerCase().includes(cityParam);
     const countryMatch = !countryParam || (g.country || '').toLowerCase() === countryParam.toUpperCase();
     const networkMatch = !networkParam || (g.network || '').toLowerCase() === networkParam;

@@ -54,7 +54,6 @@ def fetch_groups(pg: psycopg.Connection) -> list[dict]:
                 MAX(e.starts_at) FILTER (
                     WHERE e.status = 'past'
                 )                                                   AS last_event_at,
-                -- Coords from the most recent past event with a geocoded venue
                 (
                     SELECT v.lat
                     FROM events e2
@@ -77,7 +76,6 @@ def fetch_groups(pg: psycopg.Connection) -> list[dict]:
                     ORDER BY e2.starts_at DESC
                     LIMIT 1
                 )                                                   AS last_event_lon,
-                -- Geocode source of that venue (for display in popup)
                 (
                     SELECT v.geocode_source
                     FROM events e2
@@ -133,43 +131,32 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
             except Exception:
                 pass
 
-        # Use last event venue coords if available, fall back to group geocode
+        # Use last event venue coords if available, fall back to group geocode.
+        # No jitter applied anywhere — city-level groups cluster naturally via
+        # Leaflet.markercluster, venue-precise groups spiderfy on max zoom.
         use_event_location = (
             g["last_event_lat"] is not None and g["last_event_lon"] is not None
         )
-        base_lat = g["last_event_lat"] if use_event_location else g["lat"]
-        base_lon = g["last_event_lon"] if use_event_location else g["lon"]
-        geocode_source = g["last_event_geocode_source"] if use_event_location else "group"
-
-        # Deterministic jitter only for city-level group geocodes.
-        # Venue coords (postcode/address) are precise enough to plot directly.
-        if use_event_location and geocode_source in ("postcode", "address"):
-            lat = round(base_lat, 6)
-            lon = round(base_lon, 6)
+        if use_event_location:
+            lat = round(g["last_event_lat"], 6)
+            lon = round(g["last_event_lon"], 6)
+            geocode_source = g["last_event_geocode_source"]
         else:
-            jitter_seed = int(hashlib.md5(g["id"].encode()).hexdigest()[:8], 16)
-            jitter_lat = ((jitter_seed & 0xffff) / 0xffff - 0.5) * 0.04
-            jitter_lon = ((jitter_seed >> 16 & 0xffff) / 0xffff - 0.5) * 0.06
-            lat = round((base_lat or 0) + jitter_lat, 6)
-            lon = round((base_lon or 0) + jitter_lon, 6)
+            lat = round(g["lat"] or 0, 6)
+            lon = round(g["lon"] or 0, 6)
+            geocode_source = "group"
 
-        # Four distinct states using last_scraped_at + events_scraped_at:
-        # - last_scraped_at NULL                       -> never reached by worker
-        # - last_scraped_at SET, events_scraped_at NULL -> group written, events fetch failed
-        # - events_scraped_at SET, total_events == 0   -> scraped OK, genuinely no events
-        # - events_scraped_at SET, total_events > 0    -> normal
         total_events_in_db = int(g["total_events_in_db"] or 0)
-        # Use GQL totalCount if available, fall back to DB count
         total_events = int(g["total_past_events"] or 0) if g["total_past_events"] else total_events_in_db
 
         if g["last_scraped_at"] is None:
-            event_status = "unscraped"      # grey -- never processed by worker
+            event_status = "unscraped"
         elif g["events_scraped_at"] is None:
-            event_status = "events_failed"  # red -- group written but events fetch failed
+            event_status = "events_failed"
         elif total_events == 0:
-            event_status = "no_events"      # amber -- scraped OK, genuinely no events
+            event_status = "no_events"
         else:
-            event_status = "ok"             # normal
+            event_status = "ok"
 
         features.append({
             "lat": lat,
@@ -185,7 +172,7 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
             "network": g["pro_network"] or "",
             "color": colour_map.get(g["pro_network"] or "", "#8b5cf6"),
             "event_location": use_event_location,
-            "geocode_source": geocode_source,  # 'postcode'|'address'|'city'|'group'
+            "geocode_source": geocode_source,
             "event_status": event_status,
         })
 
@@ -329,7 +316,15 @@ L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
   maxZoom: 19
 }}).addTo(map);
 
-const clusters = L.markerClusterGroup({{ maxClusterRadius: 40, disableClusteringAtZoom: 8 }});
+const clusters = L.markerClusterGroup({{
+  // Keep clustering until street level so city-stacked markers stay grouped.
+  // At zoom 16 (building level) spiderfy kicks in for exact overlaps.
+  maxClusterRadius: 60,
+  disableClusteringAtZoom: 16,
+  spiderfyOnMaxZoom: true,
+  spiderfyDistanceMultiplier: 2,
+  zoomToBoundsOnClick: true,
+}});
 const markers = [];
 let activeNetworks = null;
 let activeLocationSources = new Set(['postcode', 'address', 'city', 'group', 'miss', null]);
@@ -432,7 +427,6 @@ function clearFilter() {{
 }}
 
 function toggleLocationFilter(source, enabled) {{
-  // 'city' checkbox also controls null/miss sources (groups with no venue data)
   if (source === 'city') {{
     if (enabled) {{ activeLocationSources.add('city'); activeLocationSources.add('miss'); activeLocationSources.add(null); }}
     else         {{ activeLocationSources.delete('city'); activeLocationSources.delete('miss'); activeLocationSources.delete(null); }}

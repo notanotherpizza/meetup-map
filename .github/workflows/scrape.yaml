@@ -6,6 +6,8 @@ on:
       networks:
         description: "Pro networks (space separated, or ALL)"
         default: "pydata"
+  schedule:
+    - cron: "0 0 * * *" # every day at midnight UTC
 
 concurrency:
   group: scrape

@@ -1,0 +1,200 @@
+{
+  "title": "MeetupMap Scrape Dashboard",
+  "uid": "meetupmap-scrape",
+  "schemaVersion": 38,
+  "version": 3,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Groups Scraped (this run)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" }, "unit": "short" } },
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) as value\nFROM groups\nWHERE last_scraped_at >= (SELECT started_at FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs))",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 2,
+      "title": "Total Groups (this run)",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" } },
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) as value\nFROM groups\nWHERE pro_network = ANY(\n  SELECT unnest(string_to_array(networks, ','))\n  FROM scrape_runs\n  WHERE id = (SELECT MAX(id) FROM scrape_runs)\n)",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "% Complete (this run)",
+      "type": "gauge",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "minVizWidth": 75, "minVizHeight": 75 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": 0 },
+            { "color": "yellow", "value": 50 },
+            { "color": "green", "value": 80 }
+          ]}
+        }
+      },
+      "targets": [{
+        "rawSql": "WITH run AS (\n  SELECT started_at, networks FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs)\n),\ntotal AS (\n  SELECT COUNT(*) as n FROM groups\n  WHERE pro_network = ANY(\n    SELECT unnest(string_to_array(networks, ',')) FROM run\n  )\n),\ndone AS (\n  SELECT COUNT(*) as n FROM groups\n  WHERE last_scraped_at >= (SELECT started_at FROM run)\n)\nSELECT ROUND(100.0 * done.n / NULLIF(total.n, 0), 1) as value\nFROM done, total",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "Estimated Time Remaining",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" }, "unit": "s" } },
+      "targets": [{
+        "rawSql": "WITH run AS (\n  SELECT started_at, networks FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs)\n),\nrate AS (\n  SELECT COUNT(*) / NULLIF(EXTRACT(EPOCH FROM (MAX(last_scraped_at) - MIN(last_scraped_at))), 0) as groups_per_sec\n  FROM groups\n  WHERE last_scraped_at > NOW() - INTERVAL '30 minutes'\n  AND last_scraped_at >= (SELECT started_at FROM run)\n),\nremaining AS (\n  SELECT COUNT(*) as n\n  FROM groups\n  WHERE pro_network = ANY(\n    SELECT unnest(string_to_array(networks, ',')) FROM run\n  )\n  AND last_scraped_at < (SELECT started_at FROM run)\n)\nSELECT ROUND(remaining.n / NULLIF(rate.groups_per_sec, 0)) as value\nFROM rate, remaining",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Groups Scraped / min (last 30m)",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" }, "unit": "short", "decimals": 1 } },
+      "targets": [{
+        "rawSql": "SELECT ROUND(COUNT(*) / 30.0, 1) as value\nFROM groups\nWHERE last_scraped_at > NOW() - INTERVAL '30 minutes'\nAND last_scraped_at >= (SELECT started_at FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs))",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 6,
+      "title": "Scrape Throughput (groups/min)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 16, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 15 },
+          "unit": "short"
+        }
+      },
+      "targets": [{
+        "rawSql": "SELECT\n  date_trunc('minute', last_scraped_at) as time,\n  COUNT(*) as \"groups/min\"\nFROM groups\nWHERE last_scraped_at BETWEEN $__timeFrom() AND $__timeTo()\nAND last_scraped_at >= (SELECT started_at FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs))\nGROUP BY 1\nORDER BY 1",
+        "format": "time_series"
+      }]
+    },
+    {
+      "id": 7,
+      "title": "Scrape Progress Over Time (this run)",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 4, "w": 8, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "green" },
+          "custom": { "lineWidth": 2, "fillOpacity": 20 },
+          "unit": "short"
+        }
+      },
+      "targets": [{
+        "rawSql": "SELECT\n  date_trunc('minute', last_scraped_at) as time,\n  COUNT(*) OVER (ORDER BY date_trunc('minute', last_scraped_at)) as \"cumulative scraped\"\nFROM (\n  SELECT date_trunc('minute', last_scraped_at) as last_scraped_at\n  FROM groups\n  WHERE last_scraped_at BETWEEN $__timeFrom() AND $__timeTo()\n  AND last_scraped_at >= (SELECT started_at FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs))\n  GROUP BY 1\n) t\nORDER BY 1",
+        "format": "time_series"
+      }]
+    },
+    {
+      "id": 8,
+      "title": "Groups Remaining (this run)",
+      "type": "bargauge",
+      "gridPos": { "x": 0, "y": 12, "w": 8, "h": 6 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": 0 },
+            { "color": "yellow", "value": 5000 },
+            { "color": "red", "value": 10000 }
+          ]}
+        }
+      },
+      "targets": [{
+        "rawSql": "WITH run AS (\n  SELECT started_at, networks FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs)\n)\nSELECT\n  'Scraped' as label, COUNT(*) as value\nFROM groups\nWHERE last_scraped_at >= (SELECT started_at FROM run)\nUNION ALL\nSELECT\n  'Remaining' as label, COUNT(*) as value\nFROM groups\nWHERE pro_network = ANY(\n  SELECT unnest(string_to_array(networks, ',')) FROM run\n)\nAND last_scraped_at < (SELECT started_at FROM run)",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 9,
+      "title": "Run Info",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 12, "w": 8, "h": 6 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "dark-blue" } } },
+      "targets": [{
+        "rawSql": "SELECT\n  id as \"Run ID\",\n  started_at as \"Started At\",\n  status as \"Status\"\nFROM scrape_runs\nWHERE id = (SELECT MAX(id) FROM scrape_runs)",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 10,
+      "title": "Top Networks by Group Count",
+      "type": "bargauge",
+      "gridPos": { "x": 16, "y": 12, "w": 8, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient"
+      },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } } },
+      "targets": [{
+        "rawSql": "SELECT pro_network, COUNT(*) as count\nFROM groups\nWHERE pro_network IS NOT NULL\nAND pro_network != ''\nGROUP BY pro_network\nORDER BY count DESC\nLIMIT 10",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 11,
+      "title": "Recent Scrape Activity (this run)",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 6 },
+      "datasource": { "type": "postgres", "uid": "P959179BC9356FFE3" },
+      "options": { "sortBy": [{ "displayName": "scraped_at", "desc": true }] },
+      "targets": [{
+        "rawSql": "SELECT\n  id as group_id,\n  name,\n  pro_network as network,\n  city,\n  country,\n  member_count as members,\n  last_scraped_at as scraped_at\nFROM groups\nWHERE last_scraped_at >= (SELECT started_at FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs))\nORDER BY last_scraped_at DESC\nLIMIT 50",
+        "format": "table"
+      }]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_MEETUPMAP_POSTGRES",
+        "type": "datasource",
+        "pluginId": "postgres",
+        "label": "Postgres",
+        "hide": 0
+      }
+    ]
+  }
+}

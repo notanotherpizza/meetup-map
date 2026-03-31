@@ -17,3 +17,5 @@ __pycache__/
 
 # Generated / local cache
 geocode_cache.json
+
+.DS_Store

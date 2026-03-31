@@ -169,7 +169,7 @@ async def run(settings: Settings) -> None:
         settings.topic_groups_raw,
         settings.topic_events_raw,
         settings.topic_venues_raw,
-    ], num_partitions=2)
+    ], num_partitions=20)
 
     producer = make_producer(settings)
 

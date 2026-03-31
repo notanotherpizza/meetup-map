@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: MeetupMap
+    folder: MeetupMap
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards

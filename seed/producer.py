@@ -216,7 +216,7 @@ async def run(settings: Settings) -> None:
 
 
 def main() -> None:
-    settings = Settings.from_env()
+    settings = Settings()
     try:
         asyncio.run(run(settings))
     except KeyboardInterrupt:

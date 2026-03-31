@@ -278,7 +278,7 @@ def run(settings: Settings) -> None:
 
 
 def main() -> None:
-    settings = Settings.from_env()
+    settings = Settings()
     try:
         run(settings)
     except KeyboardInterrupt:

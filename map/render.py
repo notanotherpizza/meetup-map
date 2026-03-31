@@ -408,7 +408,7 @@ L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
 }}).addTo(map);
 
 const clusters = L.markerClusterGroup({{
-  maxClusterRadius: 1,
+  maxClusterRadius: 10,
   spiderfyOnMaxZoom: true,
   spiderfyDistanceMultiplier: 2.5,
   zoomToBoundsOnClick: true,
@@ -604,7 +604,7 @@ renderLegend('');
 
 
 def main() -> None:
-    settings = Settings.from_env()
+    settings = Settings()
     DOCS_DIR.mkdir(exist_ok=True)
 
     log.info("Connecting to Postgres...")

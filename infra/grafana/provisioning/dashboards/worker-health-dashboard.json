@@ -82,7 +82,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT worker_id) as value\nFROM scrape_log\nWHERE scraped_at > NOW() - INTERVAL '120 minutes'",
+          "rawSql": "SELECT COUNT(DISTINCT worker_id) as value\nFROM scrape_log\nWHERE scraped_at > NOW() - INTERVAL '10 minutes'",
           "refId": "A",
           "sql": {
             "columns": [
@@ -1243,5 +1243,5 @@
   "timezone": "",
   "title": "MeetupMap Worker Health",
   "uid": "meetupmap-workers",
-  "version": 2
+  "version": 4
 }

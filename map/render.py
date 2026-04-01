@@ -114,6 +114,19 @@ def fetch_networks(pg: psycopg.Connection) -> list[dict]:
         for row in rows
     ]
 
+def get_total_workers_last_run(pg: psycopg.Connection) -> int:
+    with pg.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT DISTINCT(worker_id) AS count
+            FROM scrape_log
+            WHERE scraped_at >= (
+                SELECT started_at
+                FROM scrape_runs
+                WHERE id = (SELECT MAX(id) FROM scrape_runs)
+            )
+        """)
+        row = cur.fetchone()
+        return row["count"] if row is not None else 0
 
 def nominatim_bbox(query: str) -> tuple | None:
     """Look up a place via Nominatim and return (min_lat, max_lat, min_lon, max_lon) or None."""
@@ -368,6 +381,8 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   <div id="legend-title">
     Networks
     <span style="color:#999;font-weight:400;font-size:11px">{len(networks)}</span>
+    Workers
+    <span style="color:#999;font-weight:400;font-size:11px">{get_total_workers_last_run(pg)}</span>
   </div>
   <input id="legend-search" type="text" placeholder="Filter networks..." />
   <div id="legend-list"></div>

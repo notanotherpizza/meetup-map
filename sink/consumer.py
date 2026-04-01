@@ -2,8 +2,11 @@
 sink/consumer.py
 ────────────────
 Sink consumer: reads GroupRaw, VenueRaw, and EventRaw messages from Kafka
-and upserts them into Postgres. Uses ON CONFLICT DO UPDATE so it's safe to
-re-run and handles duplicate messages from at-least-once delivery.
+and upserts them into Postgres. Handles all geocoding (groups and venues)
+via a 3-level cache: Postgres table → geocode_cache → Nominatim.
+
+Uses ON CONFLICT DO UPDATE so it's safe to re-run and handles duplicate
+messages from at-least-once delivery.
 
 Usage:
     python -m sink.consumer
@@ -11,12 +14,16 @@ Usage:
 import json
 import os
 import logging
+import re
 import sys
+import time
 from datetime import datetime, timezone
 
+import httpx
 import psycopg
 from psycopg.rows import dict_row
 
+from shared.geocoding import COUNTRY_CODE_TO_NAME, NOMINATIM_URL, NOMINATIM_DELAY
 from shared.kafka_client import make_consumer
 from shared.models import EventRaw, GroupRaw, VenueRaw
 from shared.settings import Settings
@@ -26,6 +33,64 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 log = logging.getLogger(__name__)
+
+# ── Geocoding ─────────────────────────────────────────────────────────────────
+
+POSTCODE_PATTERNS = [
+    re.compile(r"^[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}$", re.I),  # UK: EC4R 3AD
+    re.compile(r"^\d{5}(-\d{4})?$"),                                  # US: 10001 / 10001-1234
+    re.compile(r"^[A-Z]\d[A-Z]\s*\d[A-Z]\d$", re.I),                # CA: M5V 3A8
+    re.compile(r"^\d{4}\s?[A-Z]{2}$", re.I),                         # NL: 1234 AB
+    re.compile(r"^\d{4,5}$"),                                          # DE/FR/AU: 10115
+]
+
+
+def _looks_like_postcode(s: str) -> bool:
+    return any(p.match(s.strip()) for p in POSTCODE_PATTERNS)
+
+
+def _nominatim_lookup(query: str) -> tuple[float | None, float | None, str | None]:
+    try:
+        resp = httpx.get(
+            NOMINATIM_URL,
+            params={"q": query, "format": "json", "limit": 1},
+            headers={"User-Agent": "meetupmap/0.1 (github.com/notanotherpizza/meetup-map)"},
+            timeout=10,
+        )
+        results = resp.json()
+        time.sleep(NOMINATIM_DELAY)
+        if results:
+            return float(results[0]["lat"]), float(results[0]["lon"]), results[0].get("display_name")
+        return None, None, None
+    except Exception as exc:
+        log.warning("Nominatim error for '%s': %s", query, exc)
+        return None, None, None
+
+
+def _geocode_and_cache(
+    query: str,
+    source: str,
+    conn: psycopg.Connection,
+) -> tuple[float | None, float | None, str]:
+    """Check geocode_cache, fall back to Nominatim. Returns (lat, lon, source)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT lat, lon FROM geocode_cache WHERE query = %s", (query,))
+        row = cur.fetchone()
+        if row is not None:
+            return row["lat"], row["lon"], source
+
+    lat, lon, display = _nominatim_lookup(query)
+    if not lat:
+        source = "miss"
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geocode_cache (query, lat, lon, display_name) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (query) DO NOTHING",
+            (query, lat, lon, display),
+        )
+    conn.commit()
+    return lat, lon, source
+
 
 # ── SQL ───────────────────────────────────────────────────────────────────────
 
@@ -48,10 +113,7 @@ ON CONFLICT (id) DO UPDATE SET
     member_count      = EXCLUDED.member_count,
     meetup_url        = EXCLUDED.meetup_url,
     last_scraped_at   = EXCLUDED.last_scraped_at,
-    -- Only advance events_scraped_at if the events scrape succeeded.
-    -- Keeps the last known-good timestamp if this run's events fetch failed.
     events_scraped_at = COALESCE(EXCLUDED.events_scraped_at, groups.events_scraped_at),
-    -- Only update total_past_events if we got a value (events scrape succeeded)
     total_past_events = COALESCE(EXCLUDED.total_past_events, groups.total_past_events),
     updated_at        = now()
 """
@@ -70,8 +132,6 @@ ON CONFLICT (id) DO UPDATE SET
     city           = EXCLUDED.city,
     state          = EXCLUDED.state,
     country        = EXCLUDED.country,
-    -- Only update coords if we got a better geocode source this time.
-    -- Priority: postcode > address > city > miss
     lat            = CASE
                        WHEN EXCLUDED.geocode_source = 'postcode' THEN EXCLUDED.lat
                        WHEN EXCLUDED.geocode_source = 'address'
@@ -125,21 +185,95 @@ ON CONFLICT (id) DO UPDATE SET
 
 def handle_group(payload: dict, conn: psycopg.Connection) -> None:
     group = GroupRaw(**payload)
+
+    # L1: group already has coords in the table from a previous run
+    lat, lon = None, None
+    with conn.cursor() as cur:
+        cur.execute("SELECT lat, lon FROM groups WHERE id = %s", (group.group_urlname,))
+        row = cur.fetchone()
+        if row and row["lat"] is not None:
+            lat, lon = row["lat"], row["lon"]
+
+    # L2/L3: geocode_cache then Nominatim
+    if lat is None and group.city:
+        country_name = COUNTRY_CODE_TO_NAME.get(
+            (group.country or "").lower(), (group.country or "").upper()
+        )
+        query = f"{group.city}, {country_name}" if country_name else group.city
+        lat, lon, _ = _geocode_and_cache(query, "city", conn)
+
     now = datetime.now(timezone.utc)
     params = group.model_dump(mode="json")
+    params["lat"] = lat
+    params["lon"] = lon
     params["events_scraped_at"] = now.isoformat() if group.events_scrape_ok else None
+
     with conn.cursor() as cur:
         cur.execute(UPSERT_GROUP, params)
+
+    run_id = os.environ.get("RUN_ID")
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO scrape_log
+                (run_id, worker_id, group_id, pro_network, duration_ms)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            int(run_id) if run_id else None,
+            group.worker_id,
+            group.group_urlname,
+            group.pro_network,
+            group.scrape_duration_ms,
+        ))
+
     conn.commit()
     log.debug("Upserted group: %s (events_ok=%s)", group.group_urlname, group.events_scrape_ok)
 
 
 def handle_venue(payload: dict, conn: psycopg.Connection) -> None:
     venue = VenueRaw(**payload)
+
+    # L1: already geocoded in a previous run
+    lat, lon, geocode_source, geocode_query = None, None, "miss", None
     with conn.cursor() as cur:
-        cur.execute(UPSERT_VENUE, venue.model_dump(mode="json"))
+        cur.execute(
+            "SELECT lat, lon, geocode_source, geocode_query FROM venues WHERE id = %s",
+            (venue.venue_id,)
+        )
+        row = cur.fetchone()
+        if row and row["lat"] is not None:
+            lat, lon, geocode_source, geocode_query = (
+                row["lat"], row["lon"], row["geocode_source"], row["geocode_query"]
+            )
+
+    # L2/L3: geocode_cache then Nominatim
+    if lat is None:
+        country_name = COUNTRY_CODE_TO_NAME.get(
+            (venue.country or "").lower(), (venue.country or "").upper()
+        )
+        if venue.name and _looks_like_postcode(venue.name):
+            q = f"{venue.name.strip()}, {country_name}" if country_name else venue.name.strip()
+            lat, lon, geocode_source = _geocode_and_cache(q, "postcode", conn)
+            geocode_query = q
+        elif venue.address and len(venue.address.strip()) > 3:
+            parts = [p for p in [venue.address.strip(), venue.city, country_name] if p]
+            q = ", ".join(parts)
+            lat, lon, geocode_source = _geocode_and_cache(q, "address", conn)
+            geocode_query = q
+        elif venue.city:
+            q = f"{venue.city}, {country_name}" if country_name else venue.city
+            lat, lon, geocode_source = _geocode_and_cache(q, "city", conn)
+            geocode_query = q
+
+    params = venue.model_dump(mode="json")
+    params["lat"] = lat
+    params["lon"] = lon
+    params["geocode_source"] = geocode_source
+    params["geocode_query"] = geocode_query
+
+    with conn.cursor() as cur:
+        cur.execute(UPSERT_VENUE, params)
     conn.commit()
-    log.debug("Upserted venue: %s (%s)", venue.venue_id, venue.geocode_source)
+    log.debug("Upserted venue: %s (%s)", venue.venue_id, geocode_source)
 
 
 def handle_event(payload: dict, conn: psycopg.Connection) -> None:
@@ -178,9 +312,6 @@ def run(settings: Settings) -> None:
     venues_written = 0
     events_written = 0
 
-    # FK retry buffer — events that arrived before their venue was written.
-    # Keyed by venue_id -> [event payloads].
-    # Flushed when the corresponding venue message arrives.
     venue_fk_retry_buffer: dict[str, list[dict]] = {}
 
     with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as conn:
@@ -222,7 +353,6 @@ def run(settings: Settings) -> None:
                         handle_venue(payload, conn)
                         venues_written += 1
 
-                        # Flush any events that were waiting on this venue
                         venue_id = payload.get("venue_id")
                         if venue_id and venue_id in venue_fk_retry_buffer:
                             waiting = venue_fk_retry_buffer.pop(venue_id)
@@ -245,7 +375,6 @@ def run(settings: Settings) -> None:
                 except psycopg.errors.ForeignKeyViolation as exc:
                     conn.rollback()
                     err = str(exc)
-                    # Venue FK violation — buffer the event until the venue arrives
                     if "events_venue_id_fkey" in err and topic == settings.topic_events_raw:
                         venue_id = payload.get("venue_id")
                         if venue_id:
@@ -254,8 +383,6 @@ def run(settings: Settings) -> None:
                                 "FK violation: venue %s not yet written — buffering event %s",
                                 venue_id, payload.get("event_id"),
                             )
-                        # Don't commit — message will be redelivered if sink restarts
-                    # Group FK violation on events — same pattern as before
                     elif topic == settings.topic_events_raw:
                         log.warning(
                             "FK violation for event %s — group not yet written, will retry",

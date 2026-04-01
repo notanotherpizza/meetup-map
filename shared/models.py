@@ -1,89 +1,58 @@
 """
 shared/models.py
-────────────────
-Pydantic models for every message type that flows through Kafka.
 """
 from datetime import datetime
 from typing import Optional
-
 from pydantic import BaseModel
 
-
 class GroupSeed(BaseModel):
-    """
-    Published to: groups-to-scrape
-    Carries all metadata available at seed time so workers are fully stateless —
-    they don't need to re-fetch group metadata from the Meetup API.
-    """
+    """Published to: groups-to-scrape"""
     group_urlname: str
     group_url: str
     pro_network: str
     seeded_at: datetime
-    # Metadata from the seed API call — workers use these directly
     name: Optional[str] = None
     city: Optional[str] = None
     country: Optional[str] = None
-    lat: Optional[float] = None          # Meetup truncated coords (2dp)
+    lat: Optional[float] = None
     lon: Optional[float] = None
     member_count: Optional[int] = None
 
-
 class GroupRaw(BaseModel):
-    """
-    Published to: groups-raw
-    Full metadata about a group, as scraped by a worker.
-    """
+    """Published to: groups-raw"""
     group_urlname: str
     name: str
     pro_network: str
     city: Optional[str] = None
     country: Optional[str] = None
-    lat: Optional[float] = None          # Nominatim-geocoded coords (4dp)
-    lon: Optional[float] = None
     member_count: Optional[int] = None
     meetup_url: str
     scraped_at: datetime
     scrape_method: str
-    total_past_events: Optional[int] = None  # from GQL totalCount on first page
-    # Whether the events queries (past + upcoming) completed without error.
-    # False means a GQL/network failure — events may be missing, not genuinely absent.
-    # Sink uses this to set events_scraped_at only on success.
+    total_past_events: Optional[int] = None
     events_scrape_ok: bool = False
-
+    worker_id: str
+    scrape_duration_ms: int
 
 class VenueRaw(BaseModel):
-    """
-    Published to: venues-raw
-    One message per unique venue encountered during scraping.
-    Geocoding is performed by the worker before publishing so the sink
-    can write lat/lon directly without needing Nominatim access.
-    """
-    venue_id: str                        # Meetup's venue ID
-    name: Optional[str] = None          # raw name — often a postcode
+    """Published to: venues-raw"""
+    venue_id: str
+    name: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
     country: Optional[str] = None
-    lat: Optional[float] = None          # geocoded by worker
-    lon: Optional[float] = None          # geocoded by worker
-    geocode_source: Optional[str] = None # 'postcode' | 'address' | 'city' | 'miss'
-    geocode_query: Optional[str] = None  # what was sent to Nominatim
     scraped_at: datetime
 
-
 class EventRaw(BaseModel):
-    """
-    Published to: events-raw
-    One message per event, published by a worker after scraping a group.
-    venue_id references a VenueRaw message — sink must write venues before events.
-    """
+    """Published to: events-raw"""
     event_id: str
     group_urlname: str
     title: str
     event_url: str
-    status: str                          # "past" | "upcoming" | "cancelled"
+    status: str
     is_online: bool = False
-    venue_id: Optional[str] = None       # null for online/unnamed events
+    venue_id: Optional[str] = None
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
     rsvp_count: Optional[int] = None

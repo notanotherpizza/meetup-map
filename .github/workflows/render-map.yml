@@ -1,0 +1,44 @@
+name: Render map
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'map/**'
+  schedule:
+    - cron: '0 * * * *'   # every hour
+
+concurrency:
+  group: render
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+
+      - name: Render map
+        env:
+          POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
+          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
+        run: python -m map.render
+
+      - name: Commit map
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --staged --quiet || git commit -m "chore: render map $(date -u +%Y-%m-%dT%H:%M UTC)"
+          git push

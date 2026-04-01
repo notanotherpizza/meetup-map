@@ -11,6 +11,8 @@ Seed producer → [groups-to-scrape] → Workers → [groups-raw] → Sink → P
 
 Workers are stateless — run as many as you want locally, in Docker, on GitHub Actions, or on Fly.io.
 
+Total workers: 2
+
 ---
 
 ## Quick start (local)

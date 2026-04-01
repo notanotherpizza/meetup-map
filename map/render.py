@@ -117,7 +117,7 @@ def fetch_networks(pg: psycopg.Connection) -> list[dict]:
 def get_total_workers_last_run(pg: psycopg.Connection) -> int:
     with pg.cursor(row_factory=dict_row) as cur:
         cur.execute("""
-            SELECT DISTINCT(worker_id) AS count
+            SELECT COUNT(DISTINCT worker_id) AS count
             FROM scrape_log
             WHERE scraped_at >= (
                 SELECT started_at
@@ -280,7 +280,7 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
     return json.dumps(features, ensure_ascii=False)
 
 
-def render(groups: list[dict], networks: list[dict], place_bounds: dict, generated_at: str, pg: psycopg.Connection) -> str:
+def render(groups: list[dict], networks: list[dict], place_bounds: dict, generated_at: str) -> str:
     colour_map = {n["name"]: n["colour"] for n in networks}
     groups_json = groups_to_js(groups, colour_map)
     networks_json = json.dumps(networks)
@@ -381,8 +381,6 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   <div id="legend-title">
     Networks
     <span style="color:#999;font-weight:400;font-size:11px">{len(networks)}</span>
-    Workers
-    <span style="color:#999;font-weight:400;font-size:11px">{get_total_workers_last_run(pg)}</span>
   </div>
   <input id="legend-search" type="text" placeholder="Filter networks..." />
   <div id="legend-list"></div>
@@ -630,8 +628,25 @@ def main() -> None:
 
         log.info("Fetched %d groups across %d networks", len(groups), len(networks))
 
+        total_workers = get_total_workers_last_run(pg)
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        html = render(groups, networks, place_bounds, generated_at, pg)
+        html = render(groups, networks, place_bounds, generated_at)
+
+    # Update README with total workers
+    readme_path = Path("README.md")
+    if readme_path.exists():
+        readme_content = readme_path.read_text(encoding="utf-8")
+        # Replace or add total workers info
+        import re
+        if "Total workers:" in readme_content:
+            readme_content = re.sub(r"Total workers: .*\n", f"Total workers from last run: {total_workers}\n", readme_content)
+        else:
+            # Add after the diagram
+            pattern = r"```\n\nWorkers are stateless"
+            replacement = f"```\n\nTotal workers from last run: {total_workers}\n\nWorkers are stateless"
+            readme_content = re.sub(pattern, replacement, readme_content)
+        readme_path.write_text(readme_content, encoding="utf-8")
+        log.info("Updated README.md with total workers: %d", total_workers)
 
     out = DOCS_DIR / "index.html"
     out.write_text(html, encoding="utf-8")

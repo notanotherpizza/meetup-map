@@ -57,24 +57,50 @@ async def fetch_all_networks(client: httpx.AsyncClient) -> list[str]:
     return unique
 
 
+GQL_QUERY = """
+query getProNetworkGroupsGeoByUrlname($urlname: String!, $first: Int, $active: Boolean) {
+  proNetwork(urlname: $urlname) {
+    groupsSearch(filter: {active: $active}, first: $first) {
+      edges {
+        node {
+          name
+          link
+          city
+          country
+          lat
+          lon
+        }
+      }
+    }
+  }
+}
+"""
+
 async def fetch_groups(network: str, client: httpx.AsyncClient) -> list[dict]:
-    """Single API call — returns all groups for a pro network."""
-    resp = await client.post(
-        MEETUP_GQL_URL,
-        json={
-            "operationName": "getProNetworkGroupsGeoByUrlname",
-            "variables": {"urlname": network, "first": 500, "active": True},
-            "extensions": {"persistedQuery": {"version": 1, "sha256Hash": GEO_HASH}},
-        },
-        headers=HEADERS,
-    )
+    """Single API call with APQ retry — returns all groups for a pro network."""
+    payload = {
+        "operationName": "getProNetworkGroupsGeoByUrlname",
+        "variables": {"urlname": network, "first": 500, "active": True},
+        "extensions": {"persistedQuery": {"version": 1, "sha256Hash": GEO_HASH}},
+    }
+
+    resp = await client.post(MEETUP_GQL_URL, json=payload, headers=HEADERS)
     resp.raise_for_status()
     data = resp.json()
+
+    # APQ retry: if hash not found, resend with full query body
+    errors = data.get("errors", [])
+    if any(e.get("extensions", {}).get("classification") == "PersistedQueryNotFound"
+           for e in errors):
+        log.debug("[%s] PersistedQueryNotFound — retrying with full query", network)
+        payload["query"] = GQL_QUERY
+        resp = await client.post(MEETUP_GQL_URL, json=payload, headers=HEADERS)
+        resp.raise_for_status()
+        data = resp.json()
 
     if "errors" in data:
         raise ValueError(f"GQL errors: {data['errors']}")
 
-    # Check the network actually exists
     if not data.get("data", {}).get("proNetwork"):
         raise ValueError(f"No proNetwork found for '{network}'")
 

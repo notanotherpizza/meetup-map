@@ -56,18 +56,81 @@ POSTCODE_PATTERNS = [
 
 # ── Meetup API ────────────────────────────────────────────────────────────────
 
+# Full query bodies for APQ retry
+GQL_QUERIES = {
+    "groupHome": """
+query groupHome($urlname: String!, $includePrivateInfo: Boolean) {
+  groupByUrlname(urlname: $urlname) {
+    stats {
+      memberCounts {
+        all
+      }
+    }
+  }
+}
+""",
+    "getPastGroupEvents": """
+query getPastGroupEvents($urlname: String!, $beforeDateTime: String, $after: String) {
+  groupByUrlname(urlname: $urlname) {
+    events(input: {startDateBefore: $beforeDateTime}, after: $after, first: 20) {
+      totalCount
+      pageInfo { hasNextPage endCursor }
+      edges {
+        node {
+          id title eventUrl dateTime isOnline venueType
+          going { totalCount }
+          venue { id name address city state country }
+        }
+      }
+    }
+  }
+}
+""",
+    "getUpcomingGroupEvents": """
+query getUpcomingGroupEvents($urlname: String!, $afterDateTime: String) {
+  groupByUrlname(urlname: $urlname) {
+    events(input: {startDateAfter: $afterDateTime}, first: 20) {
+      edges {
+        node {
+          id title eventUrl dateTime isOnline venueType
+          going { totalCount }
+          venue { id name address city state country }
+        }
+      }
+    }
+  }
+}
+""",
+}
+
+HASHES = {
+    "groupHome": GROUP_HOME_HASH,
+    "getPastGroupEvents": PAST_EVENTS_HASH,
+    "getUpcomingGroupEvents": UPCOMING_EVENTS_HASH,
+}
+
+
 async def gql(client, operation, variables, hash_):
-    resp = await client.post(
-        MEETUP_GQL_URL,
-        json={
-            "operationName": operation,
-            "variables": variables,
-            "extensions": {"persistedQuery": {"version": 1, "sha256Hash": hash_}},
-        },
-        headers=HEADERS,
-    )
+    payload = {
+        "operationName": operation,
+        "variables": variables,
+        "extensions": {"persistedQuery": {"version": 1, "sha256Hash": hash_}},
+    }
+    resp = await client.post(MEETUP_GQL_URL, json=payload, headers=HEADERS)
     resp.raise_for_status()
     data = resp.json()
+
+    # APQ retry
+    errors = data.get("errors", [])
+    if any(e.get("extensions", {}).get("classification") == "PersistedQueryNotFound"
+           for e in errors):
+        log.debug("PersistedQueryNotFound for %s — retrying with full query", operation)
+        if operation in GQL_QUERIES:
+            payload["query"] = GQL_QUERIES[operation]
+            resp = await client.post(MEETUP_GQL_URL, json=payload, headers=HEADERS)
+            resp.raise_for_status()
+            data = resp.json()
+
     if "errors" in data:
         raise ValueError(f"GQL errors in {operation}: {data['errors']}")
     return data

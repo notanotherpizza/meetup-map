@@ -1,0 +1,12 @@
+# Community-submitted groups
+# One URL per line. Blank lines and lines starting with # are ignored.
+# Supported platforms: meetup.com, lu.ma (coming soon)
+#
+# To add your group, open a PR adding a line below.
+# Format: just the group URL — no trailing slash needed.
+#
+# Examples:
+#   https://www.meetup.com/my-group/
+#   https://lu.ma/my-luma-calendar
+
+https://www.meetup.com/rust-manchester/

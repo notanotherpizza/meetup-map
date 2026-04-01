@@ -8,14 +8,19 @@ Networks can be specified via:
   - PRO_NETWORKS_STR env var (space/comma separated) for explicit list
   - PRO_NETWORKS_STR=ALL to scrape all known networks from seed/networks.py
 
+Community-submitted groups are read from community/groups.txt and seeded
+alongside Pro Network groups on every run.
+
 Usage:
     python -m seed.producer
     PRO_NETWORKS_STR=ALL python -m seed.producer
 """
 import asyncio
 import logging
+import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 
@@ -32,32 +37,7 @@ log = logging.getLogger(__name__)
 MEETUP_GQL_URL = "https://www.meetup.com/gql2"
 GEO_HASH = "08215939115765485ea3c349d1b041f5584a07c0fba497583b8c4f123b468d0a"
 
-HEADERS = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "User-Agent": "Mozilla/5.0 (compatible; meetupmap-seed/0.1)",
-}
-
-
-SITEMAP_URL = "https://www.meetup.com/sw_pro_1.xml.gz"
-
-
-async def fetch_all_networks(client: httpx.AsyncClient) -> list[str]:
-    """Fetch all pro network slugs from the Meetup sitemap."""
-    import gzip, re
-    resp = await client.get(
-        SITEMAP_URL,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; meetupmap-seed/0.1)"},
-    )
-    resp.raise_for_status()
-    content = gzip.decompress(resp.content).decode()
-    networks = re.findall(r'meetup\.com/pro/([^/<]+)/', content)
-    unique = sorted(set(networks))
-    log.info("Fetched %d pro networks from sitemap", len(unique))
-    return unique
-
-
-GQL_QUERY = """
+GEO_QUERY = """
 query getProNetworkGroupsGeoByUrlname($urlname: String!, $first: Int, $active: Boolean) {
   proNetwork(urlname: $urlname) {
     groupsSearch(filter: {active: $active}, first: $first) {
@@ -76,6 +56,71 @@ query getProNetworkGroupsGeoByUrlname($urlname: String!, $first: Int, $active: B
 }
 """
 
+HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (compatible; meetupmap-seed/0.1)",
+}
+
+SITEMAP_URL = "https://www.meetup.com/sw_pro_1.xml.gz"
+
+# Path to community-submitted groups file, relative to repo root
+COMMUNITY_GROUPS_FILE = Path(__file__).parent.parent / "community" / "groups.txt"
+
+
+def load_community_groups() -> list[dict]:
+    """
+    Read community/groups.txt and return a list of dicts with urlname + platform.
+    Lines starting with # or blank lines are ignored.
+    Returns [] if the file doesn't exist.
+    """
+    if not COMMUNITY_GROUPS_FILE.exists():
+        log.info("No community/groups.txt found — skipping community groups")
+        return []
+
+    groups = []
+    for line in COMMUNITY_GROUPS_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if "meetup.com/" in line:
+            # Extract urlname from https://www.meetup.com/group-name/
+            urlname = line.rstrip("/").split("/")[-1]
+            if urlname:
+                groups.append({
+                    "urlname": urlname,
+                    "url": line if line.startswith("http") else f"https://www.meetup.com/{urlname}/",
+                    "platform": "meetup",
+                })
+        elif "lu.ma/" in line:
+            groups.append({
+                "urlname": line.rstrip("/").split("/")[-1],
+                "url": line,
+                "platform": "luma",
+            })
+        else:
+            log.warning("Unrecognised URL format in community/groups.txt: %s", line)
+
+    log.info("Loaded %d community-submitted groups from %s", len(groups), COMMUNITY_GROUPS_FILE)
+    return groups
+
+
+async def fetch_all_networks(client: httpx.AsyncClient) -> list[str]:
+    """Fetch all pro network slugs from the Meetup sitemap."""
+    import gzip, re
+    resp = await client.get(
+        SITEMAP_URL,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; meetupmap-seed/0.1)"},
+    )
+    resp.raise_for_status()
+    content = gzip.decompress(resp.content).decode()
+    networks = re.findall(r'meetup\.com/pro/([^/<]+)/', content)
+    unique = sorted(set(networks))
+    log.info("Fetched %d pro networks from sitemap", len(unique))
+    return unique
+
+
 async def fetch_groups(network: str, client: httpx.AsyncClient) -> list[dict]:
     """Single API call with APQ retry — returns all groups for a pro network."""
     payload = {
@@ -93,7 +138,7 @@ async def fetch_groups(network: str, client: httpx.AsyncClient) -> list[dict]:
     if any(e.get("extensions", {}).get("classification") == "PersistedQueryNotFound"
            for e in errors):
         log.debug("[%s] PersistedQueryNotFound — retrying with full query", network)
-        payload["query"] = GQL_QUERY
+        payload["query"] = GEO_QUERY
         resp = await client.post(MEETUP_GQL_URL, json=payload, headers=HEADERS)
         resp.raise_for_status()
         data = resp.json()
@@ -118,8 +163,7 @@ async def seed_network(
 ) -> int:
     """
     Seed one network. Returns number of new groups published.
-    seen_urlnames is shared across networks to avoid publishing duplicates
-    (a group can belong to multiple pro networks).
+    seen_urlnames is shared across networks to avoid publishing duplicates.
     """
     now = datetime.now(timezone.utc)
     published = 0
@@ -139,7 +183,6 @@ async def seed_network(
         if not urlname:
             continue
 
-        # Skip if already published by a previous network in this run
         if urlname.lower() in seen_urlnames:
             log.debug("[%s] Skipping duplicate: %s", network, urlname)
             continue
@@ -166,6 +209,53 @@ async def seed_network(
 
     log.info("[%s] Seeded %d groups (%d total unique so far)",
              network, published, len(seen_urlnames))
+    return published
+
+
+def seed_community_groups(
+    community_groups: list[dict],
+    settings: Settings,
+    producer,
+    seen_urlnames: set[str],
+) -> int:
+    """
+    Publish GroupSeed messages for community-submitted groups.
+    Skips groups already seen from Pro Network discovery.
+    Skips unsupported platforms (e.g. luma — logged as warning).
+    Returns number of new groups published.
+    """
+    now = datetime.now(timezone.utc)
+    published = 0
+
+    for group in community_groups:
+        platform = group["platform"]
+        urlname = group["urlname"]
+
+        if platform != "meetup":
+            log.info("[community] Skipping %s (platform '%s' not yet supported)", urlname, platform)
+            continue
+
+        if urlname.lower() in seen_urlnames:
+            log.debug("[community] Skipping duplicate: %s", urlname)
+            continue
+        seen_urlnames.add(urlname.lower())
+
+        seed = GroupSeed(
+            group_urlname=urlname,
+            group_url=group["url"],
+            pro_network="community",
+            seeded_at=now,
+        )
+        publish(
+            producer,
+            topic=settings.topic_groups_to_scrape,
+            value=seed.model_dump(mode="json"),
+            key=seed.group_urlname,
+        )
+        published += 1
+        log.info("[community] Seeded %s", urlname)
+
+    log.info("[community] Seeded %d new groups", published)
     return published
 
 
@@ -223,7 +313,7 @@ async def run(settings: Settings) -> None:
                     timeout=60,
                 )
             except asyncio.TimeoutError:
-                log.warning("[%s] Timed out after 60s — skipping", network, )
+                log.warning("[%s] Timed out after 60s — skipping", network)
                 return 0
 
     results = await asyncio.gather(
@@ -237,8 +327,14 @@ async def run(settings: Settings) -> None:
         else:
             total += result
 
+    # Seed community-submitted groups after Pro Network discovery
+    community_groups = load_community_groups()
+    if community_groups:
+        total += seed_community_groups(community_groups, settings, producer, seen_urlnames)
+
     producer.flush(timeout=30)
-    log.info("Seed complete. %d unique groups published across %d networks.", total, len(networks))
+    log.info("Seed complete. %d unique groups published across %d networks + community.",
+             total, len(networks))
 
 
 def main() -> None:

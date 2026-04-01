@@ -5,7 +5,7 @@ on:
     inputs:
       networks:
         description: "Pro networks (space separated, or ALL)"
-        default: "pydata"
+        default: "ALL"
   schedule:
     - cron: "0 0 * * *" # every day at midnight UTC
 

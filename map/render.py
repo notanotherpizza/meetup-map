@@ -280,7 +280,7 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
     return json.dumps(features, ensure_ascii=False)
 
 
-def render(groups: list[dict], networks: list[dict], place_bounds: dict, generated_at: str) -> str:
+def render(groups: list[dict], networks: list[dict], place_bounds: dict, generated_at: str, pg: psycopg.Connection) -> str:
     colour_map = {n["name"]: n["colour"] for n in networks}
     groups_json = groups_to_js(groups, colour_map)
     networks_json = json.dumps(networks)
@@ -628,10 +628,10 @@ def main() -> None:
         networks = fetch_networks(pg)
         place_bounds = fetch_place_bounds(groups, pg)
 
-    log.info("Fetched %d groups across %d networks", len(groups), len(networks))
+        log.info("Fetched %d groups across %d networks", len(groups), len(networks))
 
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    html = render(groups, networks, place_bounds, generated_at)
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        html = render(groups, networks, place_bounds, generated_at, pg)
 
     out = DOCS_DIR / "index.html"
     out.write_text(html, encoding="utf-8")

@@ -443,6 +443,7 @@
             "fixedColor": "orange",
             "mode": "fixed"
           },
+          "decimals": 2,
           "mappings": [],
           "noValue": "help",
           "thresholds": {
@@ -458,7 +459,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "clocks"
         },
         "overrides": []
       },

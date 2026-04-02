@@ -382,9 +382,16 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
     Networks
     <span style="color:#999;font-weight:400;font-size:11px">{len(networks)}</span>
   </div>
-  <input id="legend-search" type="text" placeholder="Filter networks..." />
-  <div id="legend-list"></div>
-  <div id="legend-clear" onclick="clearFilter()">Show all</div>
+  <input id="networks-legend-search" type="text" placeholder="Filter networks..." />
+  <div id="networks-legend-list"></div>
+  <div id="networks-legend-clear" onclick="clearNetworkFilter()">Show all</div>
+  <div id="legend-title">
+    Groups
+    <span style="color:#999;font-weight:400;font-size:11px">{len(groups)}</span>
+  </div>
+  <input id="groups-legend-search" type="text" placeholder="Filter groups..." />
+  <div id="groups-legend-list"></div>
+  <div id="groups-legend-clear" onclick="clearGroupFilter()">Show all</div>
 </div>
 <div id="map-key">
   <div id="map-key-title">Event data</div>

@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 3,
+  "id": 5,
   "links": [],
   "panels": [
     {
@@ -393,7 +393,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "dthms"
         },
         "overrides": []
       },
@@ -444,6 +444,7 @@
             "mode": "fixed"
           },
           "mappings": [],
+          "noValue": "help",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -491,7 +492,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH run AS (\n  SELECT started_at, networks FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs)\n),\nrate AS (\n  SELECT COUNT(*) / NULLIF(EXTRACT(EPOCH FROM (MAX(last_scraped_at) - MIN(last_scraped_at))), 0) as groups_per_sec\n  FROM groups\n  WHERE last_scraped_at > NOW() - INTERVAL '30 minutes'\n  AND last_scraped_at >= (SELECT started_at FROM run)\n),\nremaining AS (\n  SELECT COUNT(*) as n\n  FROM groups\n  WHERE pro_network = ANY(\n    SELECT unnest(string_to_array(networks, ',')) FROM run\n  )\n  AND last_scraped_at < (SELECT started_at FROM run)\n)\nSELECT ROUND(remaining.n / NULLIF(rate.groups_per_sec, 0)) as value\nFROM rate, remaining",
+          "rawSql": "WITH run AS (\n  SELECT started_at, networks FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs)\n),\nrate AS (\n  SELECT COUNT(*) / NULLIF(EXTRACT(EPOCH FROM (NOW() - (SELECT started_at FROM run))), 0) as groups_per_sec\n  FROM scrape_log\n  WHERE scraped_at >= (SELECT started_at FROM run)\n  UNION ALL\n  SELECT 0 as groups_per_sec\n  WHERE NOT EXISTS (SELECT 1 FROM run)\n),\nremaining AS (\n  SELECT COUNT(*) as n\n  FROM groups\n  WHERE pro_network = ANY(\n    SELECT unnest(string_to_array(networks, ',')) FROM run\n  )\n  AND (last_scraped_at IS NULL OR last_scraped_at < (SELECT started_at FROM run))\n  UNION ALL\n  SELECT 0 as n\n  WHERE NOT EXISTS (SELECT 1 FROM run)\n)\nSELECT ROUND(remaining.n / NULLIF(rate.groups_per_sec, 0)) as value\nFROM remaining LEFT JOIN rate ON true",
           "refId": "A",
           "sql": {
             "columns": [
@@ -529,16 +530,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
-                "value": 0
-              },
-              {
-                "color": "yellow",
-                "value": 50
-              },
-              {
                 "color": "green",
-                "value": 80
+                "value": 0
               }
             ]
           },
@@ -571,9 +564,28 @@
       "pluginVersion": "12.2.0",
       "targets": [
         {
+          "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH run AS (\n  SELECT started_at, networks FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs)\n),\ntotal AS (\n  SELECT COUNT(*) as n FROM groups\n  WHERE pro_network = ANY(\n    SELECT unnest(string_to_array(networks, ',')) FROM run\n  )\n),\ndone AS (\n  SELECT COUNT(*) as n FROM groups\n  WHERE last_scraped_at >= (SELECT started_at FROM run)\n)\nSELECT ROUND(100.0 * done.n / NULLIF(total.n, 0), 1) as value\nFROM done, total",
-          "refId": "A"
+          "rawQuery": true,
+          "rawSql": "WITH run AS (\n  SELECT started_at, networks FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs)\n),\ntotal AS (\n  SELECT COUNT(*) as n FROM groups\n  WHERE pro_network = ANY(\n    SELECT unnest(string_to_array(networks, ',')) FROM run\n  )\n),\ndone AS (\n  SELECT COUNT(*) as n FROM scrape_log\n  WHERE scraped_at >= (SELECT started_at FROM run)\n)\nSELECT ROUND(100.0 * done.n / NULLIF(total.n, 0), 1) as value\nFROM done, total",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
         }
       ],
       "title": "% Complete (this run)",
@@ -719,14 +731,10 @@
               {
                 "color": "green",
                 "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
-          "unit": "short"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -755,7 +763,7 @@
             "lastNotNull"
           ],
           "fields": "",
-          "values": false
+          "values": true
         },
         "showUnfilled": true,
         "sizing": "auto",
@@ -764,9 +772,28 @@
       "pluginVersion": "12.2.0",
       "targets": [
         {
+          "editorMode": "code",
           "format": "table",
+          "rawQuery": true,
           "rawSql": "SELECT worker_id, COUNT(*) as groups_scraped\nFROM scrape_log\nWHERE scraped_at >= (SELECT started_at FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs))\nGROUP BY worker_id\nORDER BY groups_scraped DESC",
-          "refId": "A"
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
         }
       ],
       "title": "Groups Scraped per Worker (this run)",
@@ -829,7 +856,7 @@
             "lastNotNull"
           ],
           "fields": "",
-          "values": false
+          "values": true
         },
         "showUnfilled": true,
         "sizing": "auto",
@@ -1243,5 +1270,5 @@
   "timezone": "",
   "title": "MeetupMap Worker Health",
   "uid": "meetupmap-workers",
-  "version": 4
+  "version": 1
 }

@@ -325,6 +325,24 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   font-weight: 600; font-size: 12px; margin-bottom: 6px;
   display: flex; justify-content: space-between; align-items: center;
 }}
+.legend-section-title {{
+  font-weight: 600; font-size: 12px; margin-bottom: 6px;
+  display: flex; justify-content: space-between; align-items: center;
+  cursor: pointer; user-select: none;
+}}
+.legend-section-title:hover {{ background: rgba(0,0,0,0.05); border-radius: 4px; padding: 2px; }}
+.legend-toggle {{
+  font-size: 10px; transition: transform 0.2s;
+}}
+.legend-section-content {{
+  margin-bottom: 8px;
+}}
+.legend-section-content.collapsed {{
+  display: none;
+}}
+.legend-section-title.collapsed .legend-toggle {{
+  transform: rotate(-90deg);
+}}
 #legend-search {{
   width: 100%; border: 1px solid #ddd; border-radius: 4px;
   padding: 3px 6px; font-size: 11px; margin-bottom: 6px;
@@ -378,20 +396,26 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   <div id="updated">Updated {generated_at}</div>
 </div>
 <div id="legend">
-  <div id="legend-title">
+  <div id="networks-legend-title" class="legend-section-title" onclick="toggleLegendSection('networks')">
     Networks
     <span style="color:#999;font-weight:400;font-size:11px">{len(networks)}</span>
+    <span class="legend-toggle">▼</span>
   </div>
-  <input id="networks-legend-search" type="text" placeholder="Filter networks..." />
-  <div id="networks-legend-list"></div>
-  <div id="networks-legend-clear" onclick="clearNetworkFilter()">Show all</div>
-  <div id="legend-title">
+  <div id="networks-legend-content" class="legend-section-content">
+    <input id="networks-legend-search" type="text" placeholder="Filter networks..." />
+    <div id="networks-legend-list"></div>
+    <div id="networks-legend-clear" onclick="clearNetworkFilter()">Show all</div>
+  </div>
+  <div id="groups-legend-title" class="legend-section-title" onclick="toggleLegendSection('groups')">
     Groups
     <span style="color:#999;font-weight:400;font-size:11px">{len(groups)}</span>
+    <span class="legend-toggle">▼</span>
   </div>
-  <input id="groups-legend-search" type="text" placeholder="Filter groups..." />
-  <div id="groups-legend-list"></div>
-  <div id="groups-legend-clear" onclick="clearGroupFilter()">Show all</div>
+  <div id="groups-legend-content" class="legend-section-content">
+    <input id="groups-legend-search" type="text" placeholder="Filter groups..." />
+    <div id="groups-legend-list"></div>
+    <div id="groups-legend-clear" onclick="clearGroupFilter()">Show all</div>
+  </div>
 </div>
 <div id="map-key">
   <div id="map-key-title">Event data</div>
@@ -579,6 +603,20 @@ function toggleLocationFilter(source, enabled) {{
     else         activeLocationSources.delete(source);
   }}
   applyFilter();
+}}
+
+function toggleLegendSection(section) {{
+  const title = document.getElementById(`${{section}}-legend-title`);
+  const content = document.getElementById(`${{section}}-legend-content`);
+  const isCollapsed = content.classList.contains('collapsed');
+  
+  if (isCollapsed) {{
+    content.classList.remove('collapsed');
+    title.classList.remove('collapsed');
+  }} else {{
+    content.classList.add('collapsed');
+    title.classList.add('collapsed');
+  }}
 }}
 
 function renderLegend(filter) {{

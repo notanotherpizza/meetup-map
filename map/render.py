@@ -447,6 +447,7 @@ clusters.on('clusterclick', function(e) {{
 
 const markers = [];
 let activeNetworks = null;
+let activeGroups = null;
 let activeLocationSources = new Set(['postcode', 'address', 'city', 'group', 'miss', null]);
 
 function markerStyle(g) {{
@@ -522,14 +523,17 @@ function applyFilter() {{
   markers.forEach(m => {{
     const networkOk = !activeNetworks || activeNetworks.has(m._network);
     const locationOk = activeLocationSources.has(m._geocodeSource);
-    if (networkOk && locationOk) {{
+    const groupOk = !activeGroups || activeGroups.has(m._group.name);
+    if (networkOk && locationOk && groupOk) {{
       clusters.addLayer(m);
       count++;
     }}
   }});
   document.getElementById('visible-count').textContent = count;
-  document.getElementById('legend-clear').style.display = activeNetworks ? 'block' : 'none';
-  renderLegend(document.getElementById('legend-search').value);
+  document.getElementById('networks-legend-clear').style.display = activeNetworks ? 'block' : 'none';
+  document.getElementById('groups-legend-clear').style.display = activeGroups ? 'block' : 'none';
+  renderLegend(document.getElementById('networks-legend-search').value);
+  renderGroupsLegend(document.getElementById('groups-legend-search').value);
 }}
 
 function toggleNetwork(name) {{
@@ -544,8 +548,25 @@ function toggleNetwork(name) {{
   applyFilter();
 }}
 
-function clearFilter() {{
+function clearNetworkFilter() {{
   activeNetworks = null;
+  applyFilter();
+}}
+
+function toggleGroup(name) {{
+  if (!activeGroups) {{
+    activeGroups = new Set([name]);
+  }} else if (activeGroups.has(name)) {{
+    activeGroups.delete(name);
+    if (activeGroups.size === 0) activeGroups = null;
+  }} else {{
+    activeGroups.add(name);
+  }}
+  applyFilter();
+}}
+
+function clearGroupFilter() {{
+  activeGroups = null;
   applyFilter();
 }}
 
@@ -561,7 +582,7 @@ function toggleLocationFilter(source, enabled) {{
 }}
 
 function renderLegend(filter) {{
-  const list = document.getElementById('legend-list');
+  const list = document.getElementById('networks-legend-list');
   const term = (filter || '').toLowerCase();
   list.innerHTML = NETWORKS
     .filter(n => !term || n.name.toLowerCase().includes(term))
@@ -575,11 +596,31 @@ function renderLegend(filter) {{
     }}).join('');
 }}
 
-document.getElementById('legend-search').addEventListener('input', e => {{
+function renderGroupsLegend(filter) {{
+  const list = document.getElementById('groups-legend-list');
+  const term = (filter || '').toLowerCase();
+  list.innerHTML = GROUPS
+    .filter(g => !term || g.name.toLowerCase().includes(term))
+    .map(g => {{
+      const active = !activeGroups || activeGroups.has(g.name);
+      return `<div class="legend-item ${{active ? '' : 'dimmed'}}" onclick="toggleGroup('${{g.name.replace(/'/g, "\\'")}}')">
+        <div class="legend-dot" style="background:${{g.color}}"></div>
+        <span class="legend-label">${{g.name}}</span>
+        <span class="legend-count">${{g.members}}</span>
+      </div>`;
+    }}).join('');
+}}
+
+document.getElementById('networks-legend-search').addEventListener('input', e => {{
   renderLegend(e.target.value);
 }});
 
+document.getElementById('groups-legend-search').addEventListener('input', e => {{
+  renderGroupsLegend(e.target.value);
+}});
+
 renderLegend('');
+renderGroupsLegend('');
 
 // ── URL parameter handling ─────────────────────────────────────────────────
 // Supports ?city=London, ?country=gb, ?network=pydata

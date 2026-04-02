@@ -9,6 +9,8 @@ Seed producer → [groups-to-scrape] → Workers → [groups-raw] → Sink → P
                                               → [events-raw]  ↗
 ```
 
+Total workers from last run: 3
+
 Workers are stateless — run as many as you want locally, in Docker, on GitHub Actions, or on Fly.io.
 
 Total workers from last run: 3

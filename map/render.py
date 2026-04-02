@@ -425,16 +425,16 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   <div class="key-item"><div class="key-dot" style="background:#9ca3af; opacity:0.5"></div> Not yet scraped</div>
   <div id="map-key-title" style="margin-top:8px">Location source</div>
   <div class="key-item">
-    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('postcode', this.checked)"> Postcode</label>
+    <label class="filter-check"><input type="checkbox" onchange="toggleLocationFilter('postcode', this.checked)"> Postcode</label>
   </div>
   <div class="key-item">
-    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('address', this.checked)"> Address</label>
+    <label class="filter-check"><input type="checkbox" onchange="toggleLocationFilter('address', this.checked)"> Address</label>
   </div>
   <div class="key-item">
-    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('city', this.checked)"> City-level</label>
+    <label class="filter-check"><input type="checkbox" onchange="toggleLocationFilter('city', this.checked)"> City-level</label>
   </div>
   <div class="key-item">
-    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('group', this.checked)"> Group geocode only</label>
+    <label class="filter-check"><input type="checkbox" onchange="toggleLocationFilter('group', this.checked)"> Group geocode only</label>
   </div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -472,7 +472,7 @@ clusters.on('clusterclick', function(e) {{
 const markers = [];
 let activeNetworks = null;
 let activeGroups = null;
-let activeLocationSources = new Set(['postcode', 'address', 'city', 'group', 'miss', null]);
+let activeLocationSources = new Set(['postcode', 'address']);
 
 function markerStyle(g) {{
   let fillColor, fillOpacity, dashArray, weight;

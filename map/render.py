@@ -1,7 +1,7 @@
 """
 map/render.py
 ─────────────
-Queries Postgres and renders a self-contained Leaflet map as docs/index.html,
+Queries Postgres and renders a self-contained Leaflet map as docs/group_map.html,
 ready for GitHub Pages.
 
 Usage:
@@ -303,7 +303,7 @@ def render(groups: list[dict], networks: list[dict], place_bounds: dict, generat
 body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
 #map {{ width: 100vw; height: 100vh; }}
 #panel {{
-  position: absolute; top: 12px; left: 50px; z-index: 1000;
+  position: absolute; top: 12px; left: 50px; z-group_map: 1000;
   background: rgba(255,255,255,0.95);
   border-radius: 8px; padding: 10px 14px; font-size: 13px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
@@ -314,7 +314,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
 #panel .stat span {{ font-weight: 600; color: #111; }}
 #updated {{ font-size: 11px; color: #999; margin-top: 6px; }}
 #legend {{
-  position: absolute; bottom: 24px; left: 12px; z-index: 1000;
+  position: absolute; bottom: 24px; left: 12px; z-group_map: 1000;
   background: rgba(255,255,255,0.95);
   border-radius: 8px; padding: 8px 12px; font-size: 12px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
@@ -364,7 +364,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   margin-top: 4px; text-align: center; display: none;
 }}
 #map-key {{
-  position: absolute; bottom: 24px; right: 12px; z-index: 1000;
+  position: absolute; bottom: 24px; right: 12px; z-group_map: 1000;
   background: rgba(255,255,255,0.95);
   border-radius: 8px; padding: 8px 12px; font-size: 11px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
@@ -734,7 +734,7 @@ def main() -> None:
         readme_path.write_text(readme_content, encoding="utf-8")
         log.info("Updated README.md with total workers: %d", total_workers)
 
-    out = DOCS_DIR / "index.html"
+    out = DOCS_DIR / "group_map.html"
     out.write_text(html, encoding="utf-8")
     log.info("Written %s (%.1f KB)", out, len(html) / 1024)
 

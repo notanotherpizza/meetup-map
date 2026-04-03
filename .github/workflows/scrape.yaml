@@ -88,27 +88,24 @@ jobs:
               with psycopg.connect(uri) as pg:
                   with pg.cursor() as cur:
                       cur.execute("""
-                          WITH run AS (
-                              SELECT started_at, networks
-                              FROM scrape_runs
-                              WHERE id = (SELECT MAX(id) FROM scrape_runs)
-                          ),
-                          total AS (
-                              SELECT COUNT(*) as n FROM groups
-                              WHERE pro_network = ANY(
-                                  SELECT unnest(string_to_array(networks, ',')) FROM run
-                              )
-                          ),
-                          done AS (
-                              SELECT COUNT(*) as n FROM groups
-                              WHERE last_scraped_at >= (SELECT started_at FROM run)
+                        WITH run AS (
+                          SELECT started_at, networks FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs)
+                        ),
+                        total AS (
+                          SELECT COUNT(*) as n FROM groups
+                          WHERE pro_network = ANY(
+                            SELECT unnest(string_to_array(networks, ',')) FROM run
                           )
-                          SELECT done.n, total.n,
-                              ROUND(100.0 * done.n / NULLIF(total.n, 0), 1) as pct
-                          FROM done, total
+                        ),
+                        done AS (
+                          SELECT COUNT(*) as n FROM scrape_log
+                          WHERE scraped_at >= (SELECT started_at FROM run)
+                        )
+                        SELECT ROUND(100.0 * done.n / NULLIF(total.n, 0), 1) as value
+                        FROM done, total
                       """)
-                      done, total, pct = cur.fetchone()
-                      print(f"Progress: {done}/{total} ({pct}%)")
+                      pct = cur.fetchone()[0]
+                      print(f"Progress: {pct}%")
                       if pct is not None and pct >= 99.0:
                           print("Scrape complete!")
                           break

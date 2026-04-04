@@ -291,12 +291,14 @@ let clusterGroup  = null;
 
 // ── Group id → lat/lon lookup for event map markers ───────────────────────
 const groupLatLon = {};
+const groupNetwork = {};
 GROUPS.forEach(g => {
   if (g.lat && g.lon) groupLatLon[g.id] = { lat: g.lat, lon: g.lon, color: g.color };
+  groupNetwork[g.id] = g.network;
 });
 
 // ── Sidebar visibility by type ────────────────────────────────────────────
-const GROUP_SECTIONS  = ['sec-status','sec-network','sec-members','sec-events-count','sec-scraped'];
+const GROUP_SECTIONS  = ['sec-status','sec-members','sec-events-count','sec-scraped'];
 const EVENT_SECTIONS  = ['sec-date','sec-online','sec-rsvp'];
 
 function updateSidebarVisibility() {
@@ -433,6 +435,7 @@ function getResults() {
 
   if (type !== 'groups' && EVENTS.length) {
     const es = EVENTS.filter(e => {
+      if (activeNetwork !== 'all' && groupNetwork[e.group_id] !== activeNetwork) return false;
       if (activeOnline === 'online'   && !e.is_online) return false;
       if (activeOnline === 'inperson' &&  e.is_online) return false;
       if ((e.rsvp_count || 0) < minRsvp) return false;

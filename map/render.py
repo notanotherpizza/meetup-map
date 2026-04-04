@@ -1,8 +1,9 @@
 """
 map/render.py
 ─────────────
-Queries Postgres and renders a self-contained Leaflet map as docs/group_map.html,
-ready for GitHub Pages.
+Queries Postgres and renders:
+  - docs/group_map.html  — self-contained Leaflet map
+  - docs/index.html      — search page (injected from map/index_template.html)
 
 Usage:
     python -m map.render
@@ -11,6 +12,7 @@ import json
 import logging
 import hashlib
 import colorsys
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -114,6 +116,32 @@ def fetch_networks(pg: psycopg.Connection) -> list[dict]:
         for row in rows
     ]
 
+
+def fetch_events(pg: psycopg.Connection) -> list[dict]:
+    """Fetch upcoming events in the next 90 days for the search index."""
+    with pg.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT
+                e.id,
+                e.title,
+                e.event_url,
+                e.status,
+                e.is_online,
+                e.starts_at,
+                e.rsvp_count,
+                g.name    AS group_name,
+                g.id      AS group_id,
+                g.city,
+                g.country
+            FROM events e
+            JOIN groups g ON g.id = e.group_id
+            WHERE e.status = 'upcoming'
+              AND e.starts_at BETWEEN now() AND now() + interval '90 days'
+            ORDER BY e.starts_at ASC
+        """)
+        return cur.fetchall()
+
+
 def get_total_workers_last_run(pg: psycopg.Connection) -> int:
     with pg.cursor(row_factory=dict_row) as cur:
         cur.execute("""
@@ -127,6 +155,7 @@ def get_total_workers_last_run(pg: psycopg.Connection) -> int:
         """)
         row = cur.fetchone()
         return row["count"] if row is not None else 0
+
 
 def nominatim_bbox(query: str) -> tuple | None:
     """Look up a place via Nominatim and return (min_lat, max_lat, min_lon, max_lon) or None."""
@@ -158,13 +187,11 @@ def fetch_place_bounds(groups: list[dict], pg: psycopg.Connection) -> dict:
     """
     from shared.geocoding import COUNTRY_CODE_TO_NAME
 
-    # Collect unique cities and countries
     places: set[str] = set()
     for g in groups:
         if g["city"]:
             places.add(g["city"].lower().strip())
         if g["country"]:
-            # Store by country code (e.g. "gb") and full name (e.g. "united kingdom")
             code = g["country"].lower().strip()
             places.add(code)
             name = COUNTRY_CODE_TO_NAME.get(code, "").lower()
@@ -175,7 +202,6 @@ def fetch_place_bounds(groups: list[dict], pg: psycopg.Connection) -> dict:
 
     bounds: dict = {}
 
-    # Check cache first
     with pg.cursor(row_factory=dict_row) as cur:
         cur.execute("""
             SELECT query, bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon
@@ -191,7 +217,6 @@ def fetch_place_bounds(groups: list[dict], pg: psycopg.Connection) -> dict:
 
     log.info("Cache hits: %d / %d", len(bounds), len(places))
 
-    # Nominatim for misses
     misses = [p for p in places if p not in bounds]
     log.info("Nominatim lookups needed: %d", len(misses))
 
@@ -199,7 +224,6 @@ def fetch_place_bounds(groups: list[dict], pg: psycopg.Connection) -> dict:
         bb = nominatim_bbox(place)
         if bb:
             bounds[place] = list(bb)
-            # Write back to cache
             with pg.cursor() as cur:
                 cur.execute("""
                     INSERT INTO geocode_cache (query, bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon)
@@ -260,6 +284,7 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
             event_status = "ok"
 
         features.append({
+            "id": g["id"],
             "lat": lat,
             "lon": lon,
             "name": g["name"] or g["id"],
@@ -278,6 +303,25 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
         })
 
     return json.dumps(features, ensure_ascii=False)
+
+
+def events_to_js(events: list[dict]) -> str:
+    rows = []
+    for e in events:
+        rows.append({
+            "id":         e["id"],
+            "title":      e["title"] or "",
+            "event_url":  e["event_url"] or "",
+            "status":     e["status"] or "",
+            "is_online":  e["is_online"],
+            "starts_at":  e["starts_at"].isoformat() if e["starts_at"] else None,
+            "rsvp_count": e["rsvp_count"] or 0,
+            "group_name": e["group_name"] or "",
+            "group_id":   e["group_id"] or "",
+            "city":       e["city"] or "",
+            "country":    (e["country"] or "").upper(),
+        })
+    return json.dumps(rows, ensure_ascii=False)
 
 
 def render(groups: list[dict], networks: list[dict], place_bounds: dict, generated_at: str) -> str:
@@ -303,7 +347,7 @@ def render(groups: list[dict], networks: list[dict], place_bounds: dict, generat
 body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
 #map {{ width: 100vw; height: 100vh; }}
 #panel {{
-  position: absolute; top: 12px; left: 50px; z-group_map: 1000;
+  position: absolute; top: 12px; left: 50px; z-index: 1000;
   background: rgba(255,255,255,0.95);
   border-radius: 8px; padding: 10px 14px; font-size: 13px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
@@ -314,7 +358,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
 #panel .stat span {{ font-weight: 600; color: #111; }}
 #updated {{ font-size: 11px; color: #999; margin-top: 6px; }}
 #legend {{
-  position: absolute; bottom: 24px; left: 12px; z-group_map: 1000;
+  position: absolute; bottom: 24px; left: 12px; z-index: 1000;
   background: rgba(255,255,255,0.95);
   border-radius: 8px; padding: 8px 12px; font-size: 12px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
@@ -364,7 +408,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   margin-top: 4px; text-align: center; display: none;
 }}
 #map-key {{
-  position: absolute; bottom: 24px; right: 12px; z-group_map: 1000;
+  position: absolute; bottom: 24px; right: 12px; z-index: 1000;
   background: rgba(255,255,255,0.95);
   border-radius: 8px; padding: 8px 12px; font-size: 11px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
@@ -425,16 +469,16 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
   <div class="key-item"><div class="key-dot" style="background:#9ca3af; opacity:0.5"></div> Not yet scraped</div>
   <div id="map-key-title" style="margin-top:8px">Location source</div>
   <div class="key-item">
-    <label class="filter-check"><input type="checkbox" onchange="toggleLocationFilter('postcode', this.checked)"> Postcode</label>
+    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('postcode', this.checked)"> Postcode</label>
   </div>
   <div class="key-item">
-    <label class="filter-check"><input type="checkbox" onchange="toggleLocationFilter('address', this.checked)"> Address</label>
+    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('address', this.checked)"> Address</label>
   </div>
   <div class="key-item">
-    <label class="filter-check"><input type="checkbox" onchange="toggleLocationFilter('city', this.checked)"> City-level</label>
+    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('city', this.checked)"> City-level</label>
   </div>
   <div class="key-item">
-    <label class="filter-check"><input type="checkbox" onchange="toggleLocationFilter('group', this.checked)"> Group geocode only</label>
+    <label class="filter-check"><input type="checkbox" checked onchange="toggleLocationFilter('group', this.checked)"> Group geocode only</label>
   </div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -472,7 +516,7 @@ clusters.on('clusterclick', function(e) {{
 const markers = [];
 let activeNetworks = null;
 let activeGroups = null;
-let activeLocationSources = new Set(['postcode', 'address']);
+let activeLocationSources = new Set(['postcode', 'address', 'city', 'miss', 'group']);
 
 function markerStyle(g) {{
   let fillColor, fillOpacity, dashArray, weight;
@@ -545,9 +589,9 @@ function applyFilter() {{
   clusters.clearLayers();
   let count = 0;
   markers.forEach(m => {{
-    const networkOk = !activeNetworks || activeNetworks.has(m._network);
+    const networkOk  = !activeNetworks || activeNetworks.has(m._network);
     const locationOk = activeLocationSources.has(m._geocodeSource);
-    const groupOk = !activeGroups || activeGroups.has(m._group.name);
+    const groupOk    = !activeGroups || activeGroups.has(m._group.name);
     if (networkOk && locationOk && groupOk) {{
       clusters.addLayer(m);
       count++;
@@ -596,8 +640,8 @@ function clearGroupFilter() {{
 
 function toggleLocationFilter(source, enabled) {{
   if (source === 'city') {{
-    if (enabled) {{ activeLocationSources.add('city'); activeLocationSources.add('miss'); activeLocationSources.add(null); }}
-    else         {{ activeLocationSources.delete('city'); activeLocationSources.delete('miss'); activeLocationSources.delete(null); }}
+    if (enabled) {{ activeLocationSources.add('city'); activeLocationSources.add('miss'); activeLocationSources.add('group'); }}
+    else         {{ activeLocationSources.delete('city'); activeLocationSources.delete('miss'); activeLocationSources.delete('group'); }}
   }} else {{
     if (enabled) activeLocationSources.add(source);
     else         activeLocationSources.delete(source);
@@ -606,10 +650,9 @@ function toggleLocationFilter(source, enabled) {{
 }}
 
 function toggleLegendSection(section) {{
-  const title = document.getElementById(`${{section}}-legend-title`);
+  const title   = document.getElementById(`${{section}}-legend-title`);
   const content = document.getElementById(`${{section}}-legend-content`);
   const isCollapsed = content.classList.contains('collapsed');
-  
   if (isCollapsed) {{
     content.classList.remove('collapsed');
     title.classList.remove('collapsed');
@@ -660,19 +703,15 @@ document.getElementById('groups-legend-search').addEventListener('input', e => {
 renderLegend('');
 renderGroupsLegend('');
 
-// ── URL parameter handling ─────────────────────────────────────────────────
-// Supports ?city=London, ?country=gb, ?network=pydata
-// Bounding boxes are pre-baked from Postgres geocode_cache — no client-side
-// Nominatim calls needed.
+// ── URL parameter handling ────────────────────────────────────────────────
 (function() {{
-  const params = new URLSearchParams(window.location.search);
+  const params       = new URLSearchParams(window.location.search);
   const cityParam    = (params.get('city')    || '').toLowerCase().trim();
   const countryParam = (params.get('country') || '').toLowerCase().trim();
   const networkParam = (params.get('network') || '').toLowerCase().trim();
 
   if (!cityParam && !countryParam && !networkParam) return;
 
-  // Activate network filter
   if (networkParam) {{
     const matched = NETWORKS.find(n => n.name.toLowerCase() === networkParam);
     if (matched) {{
@@ -681,16 +720,9 @@ renderGroupsLegend('');
     }}
   }}
 
-  // Look up bbox — city takes priority over country if both supplied
   const bb = PLACE_BOUNDS[cityParam] || PLACE_BOUNDS[countryParam];
   if (bb) {{
-    // bb is [min_lat, max_lat, min_lon, max_lon]
-    const bounds = L.latLngBounds(
-      [bb[0], bb[2]],
-      [bb[1], bb[3]]
-    );
-    // Cities: zoom in tighter by shrinking the bbox
-    // Countries: keep a small pad so edge groups aren't clipped
+    const bounds = L.latLngBounds([bb[0], bb[2]], [bb[1], bb[3]]);
     const pad = cityParam ? -0.3 : 0.05;
     map.fitBounds(bounds.pad(pad));
   }} else if (cityParam || countryParam) {{
@@ -703,30 +735,70 @@ renderGroupsLegend('');
 
 
 def main() -> None:
+    import re
+
     settings = Settings()
     DOCS_DIR.mkdir(exist_ok=True)
 
     log.info("Connecting to Postgres...")
     with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as pg:
+        log.info("Fetching groups...")
         groups = fetch_groups(pg)
-        networks = fetch_networks(pg)
-        place_bounds = fetch_place_bounds(groups, pg)
+        log.info("Done groups: %d", len(groups))
 
-        log.info("Fetched %d groups across %d networks", len(groups), len(networks))
+        log.info("Fetching networks...")
+        networks = fetch_networks(pg)
+        log.info("Done networks: %d", len(networks))
+
+        log.info("Fetching events...")
+        events = fetch_events(pg)
+        log.info("Done events: %d", len(events))
+
+        log.info("Fetching place bounds...")
+        place_bounds = fetch_place_bounds(groups, pg)
+        log.info("Done place bounds: %d entries", len(place_bounds))
 
         total_workers = get_total_workers_last_run(pg)
-        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        html = render(groups, networks, place_bounds, generated_at)
+        generated_at  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    # Update README with total workers
+        colour_map    = {n["name"]: n["colour"] for n in networks}
+        groups_json   = groups_to_js(groups, colour_map)
+        events_json   = events_to_js(events)
+        networks_json = json.dumps(networks)
+
+        # ── group_map.html ────────────────────────────────────────────────
+        html = render(groups, networks, place_bounds, generated_at)
+        out  = DOCS_DIR / "group_map.html"
+        out.write_text(html, encoding="utf-8")
+        log.info("Written %s (%.1f KB)", out, len(html) / 1024)
+
+        # ── index.html (search page) ──────────────────────────────────────
+        template_path = Path("map/index_template.html")
+        if template_path.exists():
+            filled = (template_path.read_text(encoding="utf-8")
+                .replace("__GROUPS__",   groups_json)
+                .replace("__EVENTS__",   events_json)
+                .replace("__NETWORKS__", networks_json))
+            index_out = DOCS_DIR / "index.html"
+            index_out.write_text(filled, encoding="utf-8")
+            log.info("Written %s (%.1f KB)", index_out, len(filled) / 1024)
+        else:
+            log.warning("map/index_template.html not found — skipping search page")
+
+    # ── Static assets (images etc referenced by index_template.html) ─────
+    for asset in ["hero.jpg", "favicon.ico", "logo.png"]:
+        src = Path("map") / asset
+        if src.exists():
+            shutil.copy2(src, DOCS_DIR / asset)
+            log.info("Copied %s -> docs/", asset)
+
+    # ── README update ─────────────────────────────────────────────────────
     readme_path = Path("README.md")
     if readme_path.exists():
-        readme_content = readme_path.read_text(encoding="utf-8")
-        import re
-        marker = "Total workers from last run:"
+        readme_content  = readme_path.read_text(encoding="utf-8")
+        marker          = "Total workers from last run:"
         replacement_line = f"Total workers from last run: {total_workers}\n"
         if marker in readme_content:
-            # Replace the first (and only) occurrence; count=1 prevents doubling
             readme_content = re.sub(
                 r"Total workers from last run: \d+\n",
                 replacement_line,
@@ -734,7 +806,6 @@ def main() -> None:
                 count=1,
             )
         else:
-            # First-ever run: insert after the closing ``` of the architecture diagram
             readme_content = re.sub(
                 r"(```\n\nWorkers are stateless)",
                 f"```\n\n{replacement_line}\nWorkers are stateless",
@@ -743,10 +814,6 @@ def main() -> None:
             )
         readme_path.write_text(readme_content, encoding="utf-8")
         log.info("Updated README.md with total workers: %d", total_workers)
-
-    out = DOCS_DIR / "group_map.html"
-    out.write_text(html, encoding="utf-8")
-    log.info("Written %s (%.1f KB)", out, len(html) / 1024)
 
 
 if __name__ == "__main__":

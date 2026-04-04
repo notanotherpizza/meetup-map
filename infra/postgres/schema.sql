@@ -121,3 +121,5 @@ CREATE INDEX IF NOT EXISTS events_status_idx      ON events (status);
 CREATE INDEX IF NOT EXISTS events_venue_id_idx    ON events (venue_id);
 CREATE INDEX IF NOT EXISTS groups_pro_network_idx ON groups (pro_network);
 CREATE INDEX IF NOT EXISTS venues_country_idx     ON venues (country);
+-- Composite index for render.py fetch_events CTE (ROW_NUMBER per group by date)
+CREATE INDEX IF NOT EXISTS events_group_starts_idx ON events (group_id, starts_at DESC);

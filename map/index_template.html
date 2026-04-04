@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Not Another Pizza — Meetup Map</title>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', Arial, sans-serif; font-size: 13px; color: #111; background: #fff; }
+
+/* ── Top bar ── */
+#topbar { border-bottom: 1px solid #ddd; padding: 5px 16px; font-size: 11px; color: #666; display: flex; justify-content: flex-end; gap: 16px; }
+#topbar a { color: #444; text-decoration: none; }
+#topbar a:hover { text-decoration: underline; }
+
+/* ── Hero ── */
+#hero { text-align: center; padding: 28px 16px 16px; border-bottom: 2px solid #111; }
+#logo-wrap { display: inline-block; margin-bottom: 18px; }
+#logo-wrap img { height: 300px; width: auto; display: block; }
+
+/* Search box */
+#search-row { display: flex; justify-content: center; align-items: stretch; max-width: 600px; margin: 0 auto 12px; border: 2px solid #111; }
+#search-input { flex: 1; height: 36px; border: none; padding: 0 12px; font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; background: #fff; color: #111; }
+#search-input::placeholder { color: #aaa; }
+#search-btn { height: 36px; padding: 0 18px; font-size: 12px; font-weight: 500; font-family: 'DM Sans', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; background: #111; color: #fff; border: none; cursor: pointer; white-space: nowrap; border-left: 2px solid #111; }
+#search-btn:hover { background: #333; }
+
+/* Filter strip — just type + location + clear */
+#filter-strip { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.filter-sep { color: #ccc; font-size: 14px; font-weight: 300; }
+.filter-label { font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #888; padding-right: 2px; }
+select.filter-select { height: 26px; padding: 0 22px 0 8px; font-size: 12px; font-family: 'DM Sans', sans-serif; border: 1px solid #bbb; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E") no-repeat right 7px center; -webkit-appearance: none; appearance: none; cursor: pointer; color: #111; outline: none; }
+select.filter-select:focus { border-color: #111; }
+input.filter-input { height: 26px; padding: 0 8px; font-size: 12px; font-family: 'DM Sans', sans-serif; border: 1px solid #bbb; color: #111; outline: none; background: #fff; }
+input.filter-input:focus { border-color: #111; }
+
+/* View toggle */
+#view-toggle { display: flex; justify-content: center; margin-bottom: 0; }
+.view-btn { padding: 4px 18px; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-family: 'DM Sans', sans-serif; cursor: pointer; border: 1px solid #bbb; background: #fff; color: #666; }
+.view-btn:first-child { border-right: none; }
+.view-btn.active { background: #111; color: #fff; border-color: #111; }
+.view-btn:hover:not(.active) { background: #f5f5f5; }
+
+/* ── Results layout ── */
+#results-area { display: flex; max-width: 1100px; margin: 0 auto; padding: 12px 0; }
+
+/* ── Sidebar ── */
+#sidebar { width: 190px; flex-shrink: 0; padding: 4px 14px 8px 12px; border-right: 1px solid #e0e0e0; }
+.sidebar-section { margin-bottom: 18px; }
+.sidebar-section.hidden { display: none; }
+.sidebar-title { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #999; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #eee; }
+
+/* Clickable sidebar items (status) */
+.sidebar-item { display: flex; align-items: center; gap: 6px; padding: 3px 4px; cursor: pointer; font-size: 12px; color: #444; border-radius: 2px; user-select: none; }
+.sidebar-item:hover { background: #f5f5f5; color: #111; }
+.sidebar-item.active { color: #111; font-weight: 600; }
+
+/* Range band buttons */
+.band-row { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 4px; }
+.band-btn { font-size: 10px; font-family: 'DM Sans', sans-serif; padding: 2px 6px; border: 1px solid #ccc; background: #fff; color: #555; cursor: pointer; border-radius: 2px; white-space: nowrap; }
+.band-btn:hover { border-color: #888; color: #111; }
+.band-btn.active { background: #111; color: #fff; border-color: #111; }
+.band-free { width: 100%; margin-top: 3px; height: 22px; font-size: 11px; font-family: 'DM Sans', sans-serif; border: 1px solid #ccc; padding: 0 6px; color: #111; outline: none; }
+.band-free:focus { border-color: #111; }
+.band-free::placeholder { color: #bbb; }
+
+/* Network filter */
+.network-search { width: 100%; height: 22px; font-size: 11px; font-family: 'DM Sans', sans-serif; border: 1px solid #ccc; padding: 0 6px; color: #111; outline: none; margin-bottom: 4px; }
+.network-search:focus { border-color: #111; }
+#network-list { max-height: 140px; overflow-y: auto; }
+.network-item { display: flex; align-items: center; gap: 5px; padding: 2px 3px; cursor: pointer; font-size: 11px; color: #444; border-radius: 2px; }
+.network-item:hover { background: #f5f5f5; }
+.network-item.active { color: #111; font-weight: 600; }
+.network-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.network-count { color: #ccc; font-size: 10px; margin-left: auto; font-family: 'Courier Prime', monospace; }
+
+/* Checkbox rows */
+.check-row { display: flex; align-items: center; gap: 5px; padding: 2px 0; font-size: 12px; color: #444; cursor: pointer; }
+.check-row input { cursor: pointer; }
+
+/* Date inputs in sidebar */
+.date-row { display: flex; align-items: center; gap-4px; gap: 4px; margin-bottom: 4px; }
+.date-row label { font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 0.05em; width: 28px; flex-shrink: 0; }
+.date-row input { flex: 1; height: 22px; font-size: 11px; font-family: 'DM Sans', sans-serif; border: 1px solid #ccc; padding: 0 4px; color: #111; outline: none; min-width: 0; }
+.date-row input:focus { border-color: #111; }
+
+/* ── Main ── */
+#main-content { flex: 1; padding: 0 20px; min-width: 0; }
+#stats-bar { font-size: 11px; color: #999; border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-family: 'Courier Prime', monospace; }
+#stats-bar strong { color: #111; }
+
+/* ── List results ── */
+.result-item { margin-bottom: 18px; padding-bottom: 16px; border-bottom: 1px solid #f0f0f0; max-width: 580px; }
+.result-item:last-child { border-bottom: none; }
+.result-crumb { font-size: 11px; color: #1a6a1a; margin-bottom: 2px; font-family: 'Courier Prime', monospace; }
+.result-title { font-size: 16px; font-weight: 400; margin-bottom: 3px; line-height: 1.3; }
+.result-title a { color: #1a0dab; text-decoration: none; }
+.result-title a:hover { text-decoration: underline; }
+.result-title a:visited { color: #4b0082; }
+.result-snippet { font-size: 12px; color: #555; line-height: 1.5; margin-bottom: 5px; }
+.result-snippet .hl { font-weight: 600; color: #111; }
+.result-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag { font-size: 10px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 7px; border: 1px solid #ddd; color: #666; background: #fafafa; }
+.tag.network { border-color: #bbd0f5; color: #1a4fa8; background: #f0f5ff; }
+.tag.upcoming { border-color: #a8d5b0; color: #1a6830; background: #f0faf2; }
+.tag.event { border-color: #f5d5a8; color: #7a4a00; background: #fffaf0; }
+.tag.online { border-color: #d0d0d0; color: #555; }
+
+/* Pagination */
+#pagination { margin-top: 20px; display: flex; align-items: center; gap: 4px; justify-content: center; font-family: 'Courier Prime', monospace; }
+.page-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 13px; cursor: pointer; border: 1px solid transparent; color: #1a0dab; text-decoration: none; user-select: none; }
+.page-btn:hover { border-color: #ddd; background: #f8f8f8; }
+.page-btn.active { border-color: #111; color: #111; font-weight: bold; cursor: default; }
+.page-btn.nav { width: auto; padding: 0 10px; font-size: 12px; font-family: 'DM Sans', sans-serif; letter-spacing: 0.05em; }
+
+/* ── Map view ── */
+#map-view { display: none; height: calc(100vh - 180px); min-height: 400px; }
+#map-container { width: 100%; height: 100%; }
+
+/* No results */
+#no-results { display: none; padding: 24px 0; font-size: 13px; color: #555; }
+
+/* Leaflet popup */
+.leaflet-popup-content { font-size: 12px; line-height: 1.5; min-width: 180px; font-family: 'DM Sans', sans-serif; }
+.popup-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+.popup-url { color: #1a0dab; text-decoration: none; font-size: 11px; }
+.popup-url:hover { text-decoration: underline; }
+.popup-meta { color: #555; font-size: 11px; margin-top: 1px; }
+.popup-upcoming { background: #1a6830; color: #fff; font-size: 10px; padding: 1px 5px; }
+
+@media (max-width: 640px) {
+  #search-input { font-size: 13px; }
+  #sidebar { display: none; }
+}
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+</head>
+<body>
+
+<div id="topbar">
+  <a href="group_map.html">Full map</a>
+  <a href="#">About</a>
+</div>
+
+<div id="hero">
+  <div id="logo-wrap">
+    <img src="hero.jpg" alt="Not Another Pizza logo">
+  </div>
+
+  <div id="search-row">
+    <input type="text" id="search-input" placeholder="Search groups, events, cities, networks..." autocomplete="off" />
+    <button id="search-btn" onclick="runSearch()">Search</button>
+  </div>
+
+  <div id="filter-strip">
+    <span class="filter-label">Show</span>
+    <select class="filter-select" id="filter-type" onchange="onTypeChange()">
+      <option value="all">Groups &amp; Events</option>
+      <option value="groups">Groups only</option>
+      <option value="events">Events only</option>
+    </select>
+    <span class="filter-sep">|</span>
+    <span class="filter-label">Location</span>
+    <input type="text" id="filter-location" placeholder="City or country..." class="filter-input" style="width:140px" oninput="runSearch()" />
+    <span class="filter-sep">|</span>
+    <button class="view-btn" onclick="clearFilters()" style="font-size:11px;padding:3px 10px;border:1px solid #bbb;">Clear</button>
+  </div>
+
+  <div id="view-toggle">
+    <button class="view-btn active" id="btn-list" onclick="setView('list')">List</button>
+    <button class="view-btn" id="btn-map" onclick="setView('map')">Map</button>
+  </div>
+</div>
+
+<div id="results-area">
+  <div id="sidebar">
+
+    <!-- GROUP FILTERS -->
+    <div class="sidebar-section" id="sec-status">
+      <div class="sidebar-title">Status</div>
+      <div class="sidebar-item active" data-status="all" onclick="toggleStatus(this,'all')">All</div>
+      <div class="sidebar-item" data-status="upcoming" onclick="toggleStatus(this,'upcoming')">Has upcoming</div>
+      <div class="sidebar-item" data-status="active" onclick="toggleStatus(this,'active')">Active groups</div>
+    </div>
+
+    <div class="sidebar-section" id="sec-network">
+      <div class="sidebar-title">Network</div>
+      <input type="text" class="network-search" id="network-search" placeholder="Filter networks…" oninput="renderNetworkList()" />
+      <div id="network-list"></div>
+    </div>
+
+    <div class="sidebar-section" id="sec-members">
+      <div class="sidebar-title">Members</div>
+      <div class="band-row" id="member-bands">
+        <button class="band-btn active" data-min="0" onclick="setBand('member', this, 0)">Any</button>
+        <button class="band-btn" data-min="50" onclick="setBand('member', this, 50)">50+</button>
+        <button class="band-btn" data-min="250" onclick="setBand('member', this, 250)">250+</button>
+        <button class="band-btn" data-min="1000" onclick="setBand('member', this, 1000)">1k+</button>
+        <button class="band-btn" data-min="5000" onclick="setBand('member', this, 5000)">5k+</button>
+      </div>
+      <input type="number" class="band-free" id="member-min-free" placeholder="Min members…" min="0" oninput="onFreeMin('member')" />
+    </div>
+
+    <div class="sidebar-section" id="sec-events-count">
+      <div class="sidebar-title">Past events</div>
+      <div class="band-row" id="events-count-bands">
+        <button class="band-btn active" data-min="0" onclick="setBand('evcount', this, 0)">Any</button>
+        <button class="band-btn" data-min="5" onclick="setBand('evcount', this, 5)">5+</button>
+        <button class="band-btn" data-min="20" onclick="setBand('evcount', this, 20)">20+</button>
+        <button class="band-btn" data-min="50" onclick="setBand('evcount', this, 50)">50+</button>
+        <button class="band-btn" data-min="100" onclick="setBand('evcount', this, 100)">100+</button>
+      </div>
+      <input type="number" class="band-free" id="evcount-min-free" placeholder="Min past events…" min="0" oninput="onFreeMin('evcount')" />
+    </div>
+
+    <div class="sidebar-section" id="sec-scraped">
+      <div class="sidebar-title">Data quality</div>
+      <label class="check-row">
+        <input type="checkbox" id="chk-scraped" onchange="runSearch()" />
+        Events scraped only
+      </label>
+    </div>
+
+    <!-- EVENT FILTERS -->
+    <div class="sidebar-section" id="sec-date">
+      <div class="sidebar-title">Date range</div>
+      <div class="date-row">
+        <label>From</label>
+        <input type="date" id="filter-date-from" onchange="runSearch()" />
+      </div>
+      <div class="date-row">
+        <label>To</label>
+        <input type="date" id="filter-date-to" onchange="runSearch()" />
+      </div>
+    </div>
+
+    <div class="sidebar-section" id="sec-online">
+      <div class="sidebar-title">Format</div>
+      <div class="sidebar-item active" data-online="all" onclick="toggleOnline(this,'all')">All</div>
+      <div class="sidebar-item" data-online="inperson" onclick="toggleOnline(this,'inperson')">In person</div>
+      <div class="sidebar-item" data-online="online" onclick="toggleOnline(this,'online')">Online</div>
+    </div>
+
+    <div class="sidebar-section" id="sec-rsvp">
+      <div class="sidebar-title">Min RSVPs</div>
+      <div class="band-row" id="rsvp-bands">
+        <button class="band-btn active" data-min="0" onclick="setBand('rsvp', this, 0)">Any</button>
+        <button class="band-btn" data-min="10" onclick="setBand('rsvp', this, 10)">10+</button>
+        <button class="band-btn" data-min="50" onclick="setBand('rsvp', this, 50)">50+</button>
+        <button class="band-btn" data-min="100" onclick="setBand('rsvp', this, 100)">100+</button>
+      </div>
+      <input type="number" class="band-free" id="rsvp-min-free" placeholder="Min RSVPs…" min="0" oninput="onFreeMin('rsvp')" />
+    </div>
+
+  </div><!-- /sidebar -->
+
+  <div id="main-content">
+    <div id="stats-bar">
+      <span id="stats-text">Ready</span>
+      <span id="sort-hint" style="font-size:10px;color:#bbb;font-family:'DM Sans',sans-serif">sorted by relevance</span>
+    </div>
+    <div id="no-results"></div>
+    <div id="list-view"></div>
+    <div id="map-view"><div id="map-container"></div></div>
+    <div id="pagination"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script>
+const GROUPS   = __GROUPS__;
+const EVENTS   = __EVENTS__;
+const NETWORKS = __NETWORKS__;
+
+// ── State ─────────────────────────────────────────────────────────────────
+let currentView   = 'list';
+let activeNetwork = 'all';
+let activeStatus  = 'all';
+let activeOnline  = 'all';
+let minMembers    = 0;
+let minEvcount    = 0;
+let minRsvp       = 0;
+let currentPage   = 1;
+const PAGE_SIZE   = 10;
+let leafletMap    = null;
+let clusterGroup  = null;
+
+// ── Group id → lat/lon lookup for event map markers ───────────────────────
+const groupLatLon = {};
+GROUPS.forEach(g => {
+  if (g.lat && g.lon) groupLatLon[g.id] = { lat: g.lat, lon: g.lon, color: g.color };
+});
+
+// ── Sidebar visibility by type ────────────────────────────────────────────
+const GROUP_SECTIONS  = ['sec-status','sec-network','sec-members','sec-events-count','sec-scraped'];
+const EVENT_SECTIONS  = ['sec-date','sec-online','sec-rsvp'];
+
+function updateSidebarVisibility() {
+  const type = document.getElementById('filter-type').value;
+  GROUP_SECTIONS.forEach(id => {
+    document.getElementById(id).classList.toggle('hidden', type === 'events');
+  });
+  EVENT_SECTIONS.forEach(id => {
+    document.getElementById(id).classList.toggle('hidden', type === 'groups');
+  });
+}
+
+function onTypeChange() {
+  updateSidebarVisibility();
+  runSearch();
+}
+
+// ── Network list ──────────────────────────────────────────────────────────
+function renderNetworkList() {
+  const term = document.getElementById('network-search').value.trim().toLowerCase();
+  const list = document.getElementById('network-list');
+  const filtered = NETWORKS.filter(n => !term || n.name.toLowerCase().includes(term));
+  list.innerHTML = filtered.slice(0, 60).map(n => `
+    <div class="network-item ${activeNetwork === n.name ? 'active' : ''}"
+         onclick="setNetwork('${n.name.replace(/'/g,"\\'")}')">
+      <span class="network-dot" style="background:${n.colour}"></span>
+      <span>${n.name}</span>
+      <span class="network-count">${n.count}</span>
+    </div>`).join('');
+}
+
+function setNetwork(name) {
+  activeNetwork = activeNetwork === name ? 'all' : name;
+  renderNetworkList();
+  runSearch();
+}
+
+// ── Band buttons ──────────────────────────────────────────────────────────
+function setBand(type, el, val) {
+  const bandId = type === 'member' ? 'member-bands' : type === 'evcount' ? 'events-count-bands' : 'rsvp-bands';
+  const freeId = type === 'member' ? 'member-min-free' : type === 'evcount' ? 'evcount-min-free' : 'rsvp-min-free';
+  document.querySelectorAll(`#${bandId} .band-btn`).forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById(freeId).value = '';
+  if (type === 'member')  minMembers = val;
+  if (type === 'evcount') minEvcount = val;
+  if (type === 'rsvp')    minRsvp    = val;
+  runSearch();
+}
+
+function onFreeMin(type) {
+  const freeId = type === 'member' ? 'member-min-free' : type === 'evcount' ? 'evcount-min-free' : 'rsvp-min-free';
+  const bandId = type === 'member' ? 'member-bands' : type === 'evcount' ? 'events-count-bands' : 'rsvp-bands';
+  const val = parseInt(document.getElementById(freeId).value) || 0;
+  document.querySelectorAll(`#${bandId} .band-btn`).forEach(b => b.classList.remove('active'));
+  if (type === 'member')  minMembers = val;
+  if (type === 'evcount') minEvcount = val;
+  if (type === 'rsvp')    minRsvp    = val;
+  runSearch();
+}
+
+// ── Status / online toggles ───────────────────────────────────────────────
+function toggleStatus(el, val) {
+  document.querySelectorAll('[data-status]').forEach(i => i.classList.remove('active'));
+  el.classList.add('active');
+  activeStatus = val;
+  runSearch();
+}
+
+function toggleOnline(el, val) {
+  document.querySelectorAll('[data-online]').forEach(i => i.classList.remove('active'));
+  el.classList.add('active');
+  activeOnline = val;
+  runSearch();
+}
+
+// ── Search ────────────────────────────────────────────────────────────────
+function terms() {
+  return document.getElementById('search-input').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function score(item, ts) {
+  if (!ts.length) return 1;
+  let s = 0;
+  const fields = [
+    [(item.name || item.title || '').toLowerCase(), 4],
+    [(item.city || '').toLowerCase(), 2],
+    [(item.country || '').toLowerCase(), 2],
+    [(item.network || item.pro_network || '').toLowerCase(), 1],
+    [(item.group_name || '').toLowerCase(), 2],
+  ];
+  for (const t of ts) for (const [f, w] of fields) if (f.includes(t)) s += w;
+  return s;
+}
+
+function locationMatch(item) {
+  const loc = document.getElementById('filter-location').value.trim().toLowerCase();
+  if (!loc) return true;
+  return (item.city || '').toLowerCase().includes(loc) ||
+         (item.country || '').toLowerCase().includes(loc);
+}
+
+function dateMatch(item) {
+  const from = document.getElementById('filter-date-from').value;
+  const to   = document.getElementById('filter-date-to').value;
+  if (!from && !to) return true;
+  if (!item.starts_at) return !from;
+  const d = new Date(item.starts_at);
+  if (from && d < new Date(from)) return false;
+  if (to   && d > new Date(to + 'T23:59:59')) return false;
+  return true;
+}
+
+function getResults() {
+  const ts   = terms();
+  const type = document.getElementById('filter-type').value;
+  const scrapedOnly = document.getElementById('chk-scraped').checked;
+  let items  = [];
+
+  if (type !== 'events') {
+    const gs = GROUPS.filter(g => {
+      if (activeNetwork !== 'all' && g.network !== activeNetwork) return false;
+      if (activeStatus === 'upcoming' && (g.upcoming || 0) <= 0) return false;
+      if (activeStatus === 'active'   && g.event_status !== 'ok') return false;
+      if ((g.members || 0) < minMembers) return false;
+      if ((g.total_events || 0) < minEvcount) return false;
+      if (scrapedOnly && g.event_status === 'unscraped') return false;
+      if (!locationMatch(g)) return false;
+      if (ts.length && score(g, ts) === 0) return false;
+      return true;
+    }).map(g => ({ ...g, _type: 'group', _score: score(g, ts) }));
+    items.push(...gs);
+  }
+
+  if (type !== 'groups' && EVENTS.length) {
+    const es = EVENTS.filter(e => {
+      if (activeOnline === 'online'   && !e.is_online) return false;
+      if (activeOnline === 'inperson' &&  e.is_online) return false;
+      if ((e.rsvp_count || 0) < minRsvp) return false;
+      if (!locationMatch(e)) return false;
+      if (!dateMatch(e)) return false;
+      if (ts.length && score(e, ts) === 0) return false;
+      return true;
+    }).map(e => ({ ...e, _type: 'event', _score: score(e, ts) }));
+    items.push(...es);
+  }
+
+  items.sort((a, b) => b._score - a._score ||
+    (b.members || b.member_count || 0) - (a.members || a.member_count || 0));
+  return items;
+}
+
+// ── Highlight ─────────────────────────────────────────────────────────────
+function hl(text, ts) {
+  if (!ts.length || !text) return text || '';
+  let out = text;
+  ts.forEach(t => {
+    out = out.replace(new RegExp(`(${t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'),
+      '<span class="hl">$1</span>');
+  });
+  return out;
+}
+
+// ── Render items ──────────────────────────────────────────────────────────
+function renderGroup(g, ts) {
+  const name    = hl(g.name, ts);
+  const city    = hl(g.city || '', ts);
+  const net     = g.network || '';
+  const members = (g.members || 0).toLocaleString();
+  const total   = (g.total_events || 0).toLocaleString();
+  const upTag   = (g.upcoming || 0) > 0 ? `<span class="tag upcoming">${g.upcoming} upcoming</span>` : '';
+  const netTag  = net ? `<span class="tag network">${net}</span>` : '';
+  const loc     = [city, g.country || ''].filter(Boolean).join(', ');
+  const crumb   = `notanotherpizza.com / groups / ${g.id || ''}`;
+  return `<div class="result-item">
+    <div class="result-crumb">${crumb}</div>
+    <div class="result-title"><a href="${g.url || '#'}" target="_blank">${name}</a></div>
+    <div class="result-snippet">${loc ? loc + ' &mdash; ' : ''}<strong>${members}</strong> members &middot; <strong>${total}</strong> past events</div>
+    <div class="result-tags">${netTag}${upTag}</div>
+  </div>`;
+}
+
+function renderEvent(e, ts) {
+  const title     = hl(e.title, ts);
+  const groupName = hl(e.group_name || e.group_id || '', ts);
+  const date      = e.starts_at ? new Date(e.starts_at).toLocaleDateString('en-GB',
+    { day:'numeric', month:'short', year:'numeric' }) : '';
+  const upTag     = e.status === 'upcoming' ? '<span class="tag upcoming">Upcoming</span>' : '';
+  const onlineTag = e.is_online ? '<span class="tag online">Online</span>' : '';
+  const loc       = [e.city, e.country || ''].filter(Boolean).join(', ');
+  const crumb     = `notanotherpizza.com / events / ${e.id || ''}`;
+  return `<div class="result-item">
+    <div class="result-crumb">${crumb}</div>
+    <div class="result-title"><a href="${e.event_url || '#'}" target="_blank">${title}</a></div>
+    <div class="result-snippet">
+      ${groupName ? `<strong>${groupName}</strong>` : ''}
+      ${date ? (groupName ? ' &middot; ' : '') + date : ''}
+      ${loc ? ' &mdash; ' + loc : ''}
+      ${e.rsvp_count > 0 ? ' &middot; ' + e.rsvp_count + ' RSVPs' : ''}
+    </div>
+    <div class="result-tags"><span class="tag event">Event</span>${upTag}${onlineTag}</div>
+  </div>`;
+}
+
+function renderPage(items, page) {
+  const ts    = terms();
+  const slice = items.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
+  if (!slice.length) return '';
+  return slice.map(i => i._type === 'event' ? renderEvent(i,ts) : renderGroup(i,ts)).join('');
+}
+
+function renderPagination(total, page) {
+  const pages = Math.ceil(total / PAGE_SIZE);
+  if (pages <= 1) { document.getElementById('pagination').innerHTML = ''; return; }
+  let html = '';
+  if (page > 1) html += `<a class="page-btn nav" onclick="goPage(${page-1})">Prev</a>`;
+  const lo = Math.max(1,page-4), hi = Math.min(pages,page+4);
+  for (let i = lo; i <= hi; i++)
+    html += `<a class="page-btn ${i===page?'active':''}" onclick="goPage(${i})">${i}</a>`;
+  if (page < pages) html += `<a class="page-btn nav" onclick="goPage(${page+1})">Next</a>`;
+  document.getElementById('pagination').innerHTML = html;
+}
+
+function goPage(p) {
+  currentPage = p;
+  const items = getResults();
+  document.getElementById('list-view').innerHTML = renderPage(items, p);
+  renderPagination(items.length, p);
+  window.scrollTo({ top: document.getElementById('results-area').offsetTop - 8, behavior: 'smooth' });
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────
+function initMap() {
+  if (leafletMap) return;
+  leafletMap = L.map('map-container').setView([20, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19
+  }).addTo(leafletMap);
+  clusterGroup = L.markerClusterGroup({ maxClusterRadius: 30 });
+  leafletMap.addLayer(clusterGroup);
+}
+
+function renderMap(items) {
+  initMap();
+  clusterGroup.clearLayers();
+  const colourMap = {};
+  NETWORKS.forEach(n => colourMap[n.name] = n.colour);
+  const latlngs = [];
+
+  items.forEach(item => {
+    if (item._type === 'group') {
+      if (!item.lat || !item.lon) return;
+      const colour = colourMap[item.network] || '#555';
+      const r = Math.max(5, Math.min(14, 5 + Math.log1p(item.members || 0) * 0.9));
+      const marker = L.circleMarker([item.lat, item.lon], {
+        radius: r, fillColor: colour, color: '#fff', weight: 0.8, fillOpacity: 0.85
+      });
+      const loc = [item.city, item.country].filter(Boolean).join(', ');
+      const up  = (item.upcoming||0) > 0 ? `<span class="popup-upcoming">${item.upcoming} upcoming</span>` : '';
+      marker.bindPopup(`
+        <div class="popup-name">${item.name}</div>
+        <div class="popup-meta">${loc}</div>
+        <div class="popup-meta">${(item.members||0).toLocaleString()} members &middot; ${item.total_events||0} events</div>
+        ${up ? `<div style="margin-top:4px">${up}</div>` : ''}
+        ${item.url ? `<div style="margin-top:5px"><a class="popup-url" href="${item.url}" target="_blank">View on Meetup</a></div>` : ''}
+      `, { maxWidth: 240 });
+      clusterGroup.addLayer(marker);
+      latlngs.push([item.lat, item.lon]);
+
+    } else if (item._type === 'event') {
+      const gl = groupLatLon[item.group_id];
+      if (!gl) return;
+      const date = item.starts_at ? new Date(item.starts_at).toLocaleDateString('en-GB',
+        { day:'numeric', month:'short', year:'numeric' }) : '';
+      const marker = L.circleMarker([gl.lat, gl.lon], {
+        radius: 7, fillColor: gl.color || '#e67e22', color: '#fff',
+        weight: 1.5, fillOpacity: 0.9, dashArray: '3,2'
+      });
+      marker.bindPopup(`
+        <div class="popup-name">${item.title}</div>
+        <div class="popup-meta">${item.group_name || item.group_id}</div>
+        ${date ? `<div class="popup-meta">${date}</div>` : ''}
+        ${item.rsvp_count > 0 ? `<div class="popup-meta">${item.rsvp_count} RSVPs</div>` : ''}
+        ${item.is_online ? `<div class="popup-meta">Online event</div>` : ''}
+        ${item.event_url ? `<div style="margin-top:5px"><a class="popup-url" href="${item.event_url}" target="_blank">View on Meetup</a></div>` : ''}
+      `, { maxWidth: 240 });
+      clusterGroup.addLayer(marker);
+      latlngs.push([gl.lat, gl.lon]);
+    }
+  });
+
+  if (latlngs.length) leafletMap.fitBounds(L.latLngBounds(latlngs).pad(0.1));
+  setTimeout(() => leafletMap.invalidateSize(), 100);
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────
+function runSearch() {
+  currentPage = 1;
+  const items  = getResults();
+  const total  = items.length;
+  const q      = document.getElementById('search-input').value.trim();
+  const noRes  = document.getElementById('no-results');
+  const listEl = document.getElementById('list-view');
+
+  if (total === 0) {
+    document.getElementById('stats-text').innerHTML = 'No results';
+    noRes.style.display = 'block';
+    noRes.innerHTML = q ? `No results for <strong>"${q}"</strong>.` : 'No results match the current filters.';
+    listEl.innerHTML = '';
+    document.getElementById('pagination').innerHTML = '';
+  } else {
+    const label = q ? ` for <strong>"${q}"</strong>` : '';
+    document.getElementById('stats-text').innerHTML =
+      `<strong>${total.toLocaleString()}</strong> result${total===1?'':'s'}${label}`;
+    noRes.style.display = 'none';
+    if (currentView === 'list') {
+      listEl.innerHTML = renderPage(items, 1);
+      renderPagination(total, 1);
+    } else {
+      renderMap(items);
+    }
+  }
+}
+
+function clearFilters() {
+  document.getElementById('search-input').value = '';
+  document.getElementById('filter-location').value = '';
+  document.getElementById('filter-date-from').value = '';
+  document.getElementById('filter-date-to').value = '';
+  document.getElementById('filter-type').value = 'all';
+  document.getElementById('network-search').value = '';
+  document.getElementById('chk-scraped').checked = false;
+  document.getElementById('member-min-free').value = '';
+  document.getElementById('evcount-min-free').value = '';
+  document.getElementById('rsvp-min-free').value = '';
+  activeNetwork = 'all';
+  activeStatus  = 'all';
+  activeOnline  = 'all';
+  minMembers = 0; minEvcount = 0; minRsvp = 0;
+  document.querySelectorAll('[data-status]').forEach(i => i.classList.remove('active'));
+  document.querySelector('[data-status="all"]').classList.add('active');
+  document.querySelectorAll('[data-online]').forEach(i => i.classList.remove('active'));
+  document.querySelector('[data-online="all"]').classList.add('active');
+  document.querySelectorAll('.band-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('#member-bands .band-btn[data-min="0"]').classList.add('active');
+  document.querySelector('#events-count-bands .band-btn[data-min="0"]').classList.add('active');
+  document.querySelector('#rsvp-bands .band-btn[data-min="0"]').classList.add('active');
+  updateSidebarVisibility();
+  renderNetworkList();
+  runSearch();
+}
+
+function setView(v) {
+  currentView = v;
+  document.getElementById('btn-list').classList.toggle('active', v === 'list');
+  document.getElementById('btn-map').classList.toggle('active',  v === 'map');
+  document.getElementById('list-view').style.display  = v === 'list' ? 'block' : 'none';
+  document.getElementById('map-view').style.display   = v === 'map'  ? 'block' : 'none';
+  document.getElementById('pagination').style.display = v === 'list' ? 'flex'  : 'none';
+  if (v === 'map') renderMap(getResults());
+}
+
+document.getElementById('search-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') runSearch();
+});
+
+// Init
+updateSidebarVisibility();
+renderNetworkList();
+runSearch();
+</script>
+</body>
+</html>

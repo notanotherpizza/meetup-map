@@ -183,7 +183,7 @@ ON CONFLICT (id) DO UPDATE SET
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
-def handle_group(payload: dict, conn: psycopg.Connection) -> None:
+def handle_group(payload: dict, conn: psycopg.Connection, run_id: int | None = None) -> None:
     group = GroupRaw(**payload)
 
     # L1: group already has coords in the table from a previous run
@@ -211,14 +211,13 @@ def handle_group(payload: dict, conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
         cur.execute(UPSERT_GROUP, params)
 
-    run_id = os.environ.get("RUN_ID")
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO scrape_log
                 (run_id, worker_id, group_id, pro_network, duration_ms)
             VALUES (%s, %s, %s, %s, %s)
         """, (
-            int(run_id) if run_id else None,
+            run_id,
             group.worker_id,
             group.group_urlname,
             group.pro_network,
@@ -315,6 +314,17 @@ def run(settings: Settings) -> None:
     venue_fk_retry_buffer: dict[str, list[dict]] = {}
 
     with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as conn:
+        # Resolve run_id from the most recent scrape_runs row.
+        # Much more reliable than the RUN_ID env var which was never propagated
+        # to Fly workers. Falls back to env var if somehow the table is empty.
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM scrape_runs ORDER BY id DESC LIMIT 1")
+            row = cur.fetchone()
+            _run_id: int | None = row["id"] if row else None
+        if _run_id is None:
+            _env = os.environ.get("RUN_ID")
+            _run_id = int(_env) if _env else None
+        log.info("Sink using run_id=%s", _run_id)
         try:
             while True:
                 msg = consumer.poll(timeout=5.0)
@@ -346,7 +356,7 @@ def run(settings: Settings) -> None:
                     payload = json.loads(msg.value())
 
                     if topic == settings.topic_groups_raw:
-                        handle_group(payload, conn)
+                        handle_group(payload, conn, run_id=_run_id)
                         groups_written += 1
 
                     elif topic == settings.topic_venues_raw:

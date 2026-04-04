@@ -722,15 +722,25 @@ def main() -> None:
     readme_path = Path("README.md")
     if readme_path.exists():
         readme_content = readme_path.read_text(encoding="utf-8")
-        # Replace or add total workers info
         import re
-        if "Total workers:" in readme_content:
-            readme_content = re.sub(r"Total workers: .*\n", f"Total workers from last run: {total_workers}\n", readme_content)
+        marker = "Total workers from last run:"
+        replacement_line = f"Total workers from last run: {total_workers}\n"
+        if marker in readme_content:
+            # Replace the first (and only) occurrence; count=1 prevents doubling
+            readme_content = re.sub(
+                r"Total workers from last run: \d+\n",
+                replacement_line,
+                readme_content,
+                count=1,
+            )
         else:
-            # Add after the diagram
-            pattern = r"```\n\nWorkers are stateless"
-            replacement = f"```\n\nTotal workers from last run: {total_workers}\n\nWorkers are stateless"
-            readme_content = re.sub(pattern, replacement, readme_content)
+            # First-ever run: insert after the closing ``` of the architecture diagram
+            readme_content = re.sub(
+                r"(```\n\nWorkers are stateless)",
+                f"```\n\n{replacement_line}\nWorkers are stateless",
+                readme_content,
+                count=1,
+            )
         readme_path.write_text(readme_content, encoding="utf-8")
         log.info("Updated README.md with total workers: %d", total_workers)
 

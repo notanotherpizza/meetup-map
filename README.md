@@ -13,7 +13,6 @@ Total workers from last run: 3
 
 Workers are stateless — run as many as you want locally, in Docker, on GitHub Actions, or on Fly.io.
 
-Total workers from last run: 3
 
 ---
 
@@ -116,9 +115,9 @@ For the seed workflow (`.github/workflows/seed.yml`), add these secrets to your 
 meetupmap/
 ├── seed/           # Seed producer
 │   └── producer.py
-├── worker/         # Scraping workers (TODO)
+├── worker/         # Scraping workers
 │   └── scraper.py
-├── sink/           # Sink consumer (TODO)
+├── sink/           # Sink consumer
 │   └── consumer.py
 ├── shared/         # Config, Kafka helpers, Pydantic models
 │   ├── settings.py

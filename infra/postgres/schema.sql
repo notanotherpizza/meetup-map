@@ -1,18 +1,14 @@
--- infra/postgres/schema.sql
--- Idempotent — safe to run multiple times.
--- Run against your Aiven Postgres with:
---   psql $POSTGRES_URI -f infra/postgres/schema.sql
-
 CREATE TABLE IF NOT EXISTS groups (
     id                  TEXT        PRIMARY KEY,  -- group urlname, e.g. "PyData-London"
     name                TEXT        NOT NULL,
     pro_network         TEXT        NOT NULL,     -- "pydata", extensible to others
+    platform            TEXT        NOT NULL DEFAULT 'meetup',  -- "meetup" | "luma"
     city                TEXT,
     country             TEXT,
     lat                 DOUBLE PRECISION,
     lon                 DOUBLE PRECISION,
     member_count        INT,
-    meetup_url          TEXT,
+    source_url          TEXT,                     -- was meetup_url
     last_scraped_at     TIMESTAMPTZ,
     events_scraped_at   TIMESTAMPTZ,             -- SET only when events fetch succeeded
     total_past_events   INT,                     -- from GQL totalCount, accurate even with fetch cap
@@ -20,23 +16,43 @@ CREATE TABLE IF NOT EXISTS groups (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Migrate existing meetup_url column if it exists
+DO $$ BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'groups' AND column_name = 'meetup_url'
+    ) THEN
+        ALTER TABLE groups RENAME COLUMN meetup_url TO source_url;
+    END IF;
+END $$;
+
+-- Add platform column if missing (for existing deployments)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'groups' AND column_name = 'platform'
+    ) THEN
+        ALTER TABLE groups ADD COLUMN platform TEXT NOT NULL DEFAULT 'meetup';
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS venues (
-    id              TEXT            PRIMARY KEY,  -- Meetup's venue ID
+    id              TEXT            PRIMARY KEY,  -- Meetup's venue ID or Luma's place_id
     name            TEXT,                         -- raw name from Meetup (often a postcode)
     address         TEXT,
     city            TEXT,
     state           TEXT,
     country         TEXT,
-    lat             DOUBLE PRECISION,             -- geocoded
-    lon             DOUBLE PRECISION,             -- geocoded
-    geocode_source  TEXT,                         -- 'postcode' | 'address' | 'city' | 'miss'
-    geocode_query   TEXT,                         -- what was sent to Nominatim
+    lat             DOUBLE PRECISION,             -- geocoded or pre-geocoded from Luma
+    lon             DOUBLE PRECISION,
+    geocode_source  TEXT,                         -- 'luma_google' | 'postcode' | 'address' | 'city' | 'miss'
+    geocode_query   TEXT,                         -- what was sent to Nominatim (null for Luma)
     first_seen_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS events (
-    id                TEXT        PRIMARY KEY,  -- Meetup's own event ID
+    id                TEXT        PRIMARY KEY,  -- Meetup's own event ID or Luma's event api_id
     group_id          TEXT        NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     title             TEXT        NOT NULL,
     event_url         TEXT,
@@ -120,6 +136,7 @@ CREATE INDEX IF NOT EXISTS events_starts_at_idx   ON events (starts_at DESC);
 CREATE INDEX IF NOT EXISTS events_status_idx      ON events (status);
 CREATE INDEX IF NOT EXISTS events_venue_id_idx    ON events (venue_id);
 CREATE INDEX IF NOT EXISTS groups_pro_network_idx ON groups (pro_network);
+CREATE INDEX IF NOT EXISTS groups_platform_idx    ON groups (platform);
 CREATE INDEX IF NOT EXISTS venues_country_idx     ON venues (country);
 -- Composite index for render.py fetch_events CTE (ROW_NUMBER per group by date)
 CREATE INDEX IF NOT EXISTS events_group_starts_idx ON events (group_id, starts_at DESC);

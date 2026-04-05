@@ -9,7 +9,9 @@ Networks can be specified via:
   - PRO_NETWORKS_STR=ALL to scrape all known networks from seed/networks.py
 
 Community-submitted groups are read from community/groups.txt and seeded
-alongside Pro Network groups on every run.
+alongside Pro Network groups on every run. Supported platforms:
+  - meetup.com  — seeded as platform="meetup"
+  - lu.ma       — seeded as platform="luma"
 
 Usage:
     python -m seed.producer
@@ -85,7 +87,6 @@ def load_community_groups() -> list[dict]:
             continue
 
         if "meetup.com/" in line:
-            # Extract urlname from https://www.meetup.com/group-name/
             urlname = line.rstrip("/").split("/")[-1]
             if urlname:
                 groups.append({
@@ -93,16 +94,25 @@ def load_community_groups() -> list[dict]:
                     "url": line if line.startswith("http") else f"https://www.meetup.com/{urlname}/",
                     "platform": "meetup",
                 })
-        elif "lu.ma/" in line:
-            groups.append({
-                "urlname": line.rstrip("/").split("/")[-1],
-                "url": line,
-                "platform": "luma",
-            })
+        elif "lu.ma/" in line or "luma.com/" in line:
+            # Normalise luma.com → lu.ma
+            url = line.replace("luma.com/", "lu.ma/")
+            if not url.startswith("http"):
+                url = f"https://{url}"
+            urlname = url.rstrip("/").split("/")[-1]
+            if urlname:
+                groups.append({
+                    "urlname": urlname,
+                    "url": url,
+                    "platform": "luma",
+                })
         else:
             log.warning("Unrecognised URL format in community/groups.txt: %s", line)
 
-    log.info("Loaded %d community-submitted groups from %s", len(groups), COMMUNITY_GROUPS_FILE)
+    log.info(
+        "Loaded %d community-submitted groups from %s",
+        len(groups), COMMUNITY_GROUPS_FILE,
+    )
     return groups
 
 
@@ -133,7 +143,6 @@ async def fetch_groups(network: str, client: httpx.AsyncClient) -> list[dict]:
     resp.raise_for_status()
     data = resp.json()
 
-    # APQ retry: if hash not found, resend with full query body
     errors = data.get("errors", [])
     if any(e.get("extensions", {}).get("classification") == "PersistedQueryNotFound"
            for e in errors):
@@ -162,7 +171,7 @@ async def seed_network(
     seen_urlnames: set[str],
 ) -> int:
     """
-    Seed one network. Returns number of new groups published.
+    Seed one Meetup Pro network. Returns number of new groups published.
     seen_urlnames is shared across networks to avoid publishing duplicates.
     """
     now = datetime.now(timezone.utc)
@@ -192,6 +201,7 @@ async def seed_network(
             group_urlname=urlname,
             group_url=node.get("link", f"https://www.meetup.com/{urlname}/"),
             pro_network=network,
+            platform="meetup",
             seeded_at=now,
             name=node.get("name"),
             city=node.get("city"),
@@ -221,7 +231,7 @@ def seed_community_groups(
     """
     Publish GroupSeed messages for community-submitted groups.
     Skips groups already seen from Pro Network discovery.
-    Skips unsupported platforms (e.g. luma — logged as warning).
+    Supports meetup and luma platforms.
     Returns number of new groups published.
     """
     now = datetime.now(timezone.utc)
@@ -230,10 +240,6 @@ def seed_community_groups(
     for group in community_groups:
         platform = group["platform"]
         urlname = group["urlname"]
-
-        if platform != "meetup":
-            log.info("[community] Skipping %s (platform '%s' not yet supported)", urlname, platform)
-            continue
 
         if urlname.lower() in seen_urlnames:
             log.debug("[community] Skipping duplicate: %s", urlname)
@@ -244,6 +250,7 @@ def seed_community_groups(
             group_urlname=urlname,
             group_url=group["url"],
             pro_network="community",
+            platform=platform,
             seeded_at=now,
         )
         publish(
@@ -253,7 +260,7 @@ def seed_community_groups(
             key=seed.group_urlname,
         )
         published += 1
-        log.info("[community] Seeded %s", urlname)
+        log.info("[community] Seeded %s (platform=%s)", urlname, platform)
 
     log.info("[community] Seeded %d new groups", published)
     return published
@@ -279,7 +286,7 @@ async def create_run(settings: Settings, networks: list[str]) -> int | None:
 
 
 async def run(settings: Settings) -> None:
-    log.info("Ensuring Kafka topics exist…")
+    log.info("Ensuring Kafka topics exist...")
     ensure_topics(settings, topics=[
         settings.topic_groups_to_scrape,
         settings.topic_groups_raw,
@@ -299,7 +306,8 @@ async def run(settings: Settings) -> None:
 
     run_id = await create_run(settings, networks)
     if run_id:
-        log.info("Run ID: %d — set RUN_ID=%d in worker env to track progress", run_id, run_id)
+        log.info("Run ID: %d — set RUN_ID=%d in worker env to track progress",
+                 run_id, run_id)
 
     seen_urlnames: set[str] = set()
     total = 0
@@ -333,8 +341,10 @@ async def run(settings: Settings) -> None:
         total += seed_community_groups(community_groups, settings, producer, seen_urlnames)
 
     producer.flush(timeout=30)
-    log.info("Seed complete. %d unique groups published across %d networks + community.",
-             total, len(networks))
+    log.info(
+        "Seed complete. %d unique groups published across %d networks + community.",
+        total, len(networks),
+    )
 
 
 def main() -> None:

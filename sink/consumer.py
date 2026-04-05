@@ -5,6 +5,9 @@ Sink consumer: reads GroupRaw, VenueRaw, and EventRaw messages from Kafka
 and upserts them into Postgres. Handles all geocoding (groups and venues)
 via a 3-level cache: Postgres table → geocode_cache → Nominatim.
 
+Luma venues arrive pre-geocoded (geocode_source='luma_google') and skip
+Nominatim entirely.
+
 Uses ON CONFLICT DO UPDATE so it's safe to re-run and handles duplicate
 messages from at-least-once delivery.
 
@@ -96,22 +99,24 @@ def _geocode_and_cache(
 
 UPSERT_GROUP = """
 INSERT INTO groups (
-    id, name, pro_network, city, country, lat, lon,
-    member_count, meetup_url, last_scraped_at, events_scraped_at,
+    id, name, pro_network, platform, city, country, lat, lon,
+    member_count, source_url, last_scraped_at, events_scraped_at,
     total_past_events
 ) VALUES (
-    %(group_urlname)s, %(name)s, %(pro_network)s, %(city)s, %(country)s,
-    %(lat)s, %(lon)s, %(member_count)s, %(meetup_url)s, %(scraped_at)s,
+    %(group_urlname)s, %(name)s, %(pro_network)s, %(platform)s,
+    %(city)s, %(country)s, %(lat)s, %(lon)s,
+    %(member_count)s, %(source_url)s, %(scraped_at)s,
     %(events_scraped_at)s, %(total_past_events)s
 )
 ON CONFLICT (id) DO UPDATE SET
     name              = EXCLUDED.name,
+    platform          = EXCLUDED.platform,
     city              = EXCLUDED.city,
     country           = EXCLUDED.country,
     lat               = EXCLUDED.lat,
     lon               = EXCLUDED.lon,
     member_count      = EXCLUDED.member_count,
-    meetup_url        = EXCLUDED.meetup_url,
+    source_url        = EXCLUDED.source_url,
     last_scraped_at   = EXCLUDED.last_scraped_at,
     events_scraped_at = COALESCE(EXCLUDED.events_scraped_at, groups.events_scraped_at),
     total_past_events = COALESCE(EXCLUDED.total_past_events, groups.total_past_events),
@@ -133,27 +138,30 @@ ON CONFLICT (id) DO UPDATE SET
     state          = EXCLUDED.state,
     country        = EXCLUDED.country,
     lat            = CASE
+                       WHEN EXCLUDED.geocode_source = 'luma_google' THEN EXCLUDED.lat
                        WHEN EXCLUDED.geocode_source = 'postcode' THEN EXCLUDED.lat
                        WHEN EXCLUDED.geocode_source = 'address'
-                            AND venues.geocode_source NOT IN ('postcode') THEN EXCLUDED.lat
+                            AND venues.geocode_source NOT IN ('luma_google', 'postcode') THEN EXCLUDED.lat
                        WHEN EXCLUDED.geocode_source = 'city'
-                            AND venues.geocode_source NOT IN ('postcode', 'address') THEN EXCLUDED.lat
+                            AND venues.geocode_source NOT IN ('luma_google', 'postcode', 'address') THEN EXCLUDED.lat
                        ELSE venues.lat
                      END,
     lon            = CASE
+                       WHEN EXCLUDED.geocode_source = 'luma_google' THEN EXCLUDED.lon
                        WHEN EXCLUDED.geocode_source = 'postcode' THEN EXCLUDED.lon
                        WHEN EXCLUDED.geocode_source = 'address'
-                            AND venues.geocode_source NOT IN ('postcode') THEN EXCLUDED.lon
+                            AND venues.geocode_source NOT IN ('luma_google', 'postcode') THEN EXCLUDED.lon
                        WHEN EXCLUDED.geocode_source = 'city'
-                            AND venues.geocode_source NOT IN ('postcode', 'address') THEN EXCLUDED.lon
+                            AND venues.geocode_source NOT IN ('luma_google', 'postcode', 'address') THEN EXCLUDED.lon
                        ELSE venues.lon
                      END,
     geocode_source = CASE
+                       WHEN EXCLUDED.geocode_source = 'luma_google' THEN EXCLUDED.geocode_source
                        WHEN EXCLUDED.geocode_source = 'postcode' THEN EXCLUDED.geocode_source
                        WHEN EXCLUDED.geocode_source = 'address'
-                            AND venues.geocode_source NOT IN ('postcode') THEN EXCLUDED.geocode_source
+                            AND venues.geocode_source NOT IN ('luma_google', 'postcode') THEN EXCLUDED.geocode_source
                        WHEN EXCLUDED.geocode_source = 'city'
-                            AND venues.geocode_source NOT IN ('postcode', 'address') THEN EXCLUDED.geocode_source
+                            AND venues.geocode_source NOT IN ('luma_google', 'postcode', 'address') THEN EXCLUDED.geocode_source
                        ELSE venues.geocode_source
                      END,
     geocode_query  = COALESCE(venues.geocode_query, EXCLUDED.geocode_query),
@@ -186,13 +194,17 @@ ON CONFLICT (id) DO UPDATE SET
 def handle_group(payload: dict, conn: psycopg.Connection, run_id: int | None = None) -> None:
     group = GroupRaw(**payload)
 
-    # L1: group already has coords in the table from a previous run
-    lat, lon = None, None
-    with conn.cursor() as cur:
-        cur.execute("SELECT lat, lon FROM groups WHERE id = %s", (group.group_urlname,))
-        row = cur.fetchone()
-        if row and row["lat"] is not None:
-            lat, lon = row["lat"], row["lon"]
+    lat, lon = group.lat, group.lon
+
+    # For Luma groups the seed already carries lat/lon from the calendar page.
+    # For Meetup groups, geocode from city + country if not already in the table.
+    if lat is None:
+        # L1: group already has coords in the table from a previous run
+        with conn.cursor() as cur:
+            cur.execute("SELECT lat, lon FROM groups WHERE id = %s", (group.group_urlname,))
+            row = cur.fetchone()
+            if row and row["lat"] is not None:
+                lat, lon = row["lat"], row["lon"]
 
     # L2/L3: geocode_cache then Nominatim
     if lat is None and group.city:
@@ -225,43 +237,52 @@ def handle_group(payload: dict, conn: psycopg.Connection, run_id: int | None = N
         ))
 
     conn.commit()
-    log.debug("Upserted group: %s (events_ok=%s)", group.group_urlname, group.events_scrape_ok)
+    log.debug("Upserted group: %s (platform=%s, events_ok=%s)",
+              group.group_urlname, group.platform, group.events_scrape_ok)
 
 
 def handle_venue(payload: dict, conn: psycopg.Connection) -> None:
     venue = VenueRaw(**payload)
 
-    # L1: already geocoded in a previous run
-    lat, lon, geocode_source, geocode_query = None, None, "miss", None
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT lat, lon, geocode_source, geocode_query FROM venues WHERE id = %s",
-            (venue.venue_id,)
-        )
-        row = cur.fetchone()
-        if row and row["lat"] is not None:
-            lat, lon, geocode_source, geocode_query = (
-                row["lat"], row["lon"], row["geocode_source"], row["geocode_query"]
-            )
+    lat = venue.lat
+    lon = venue.lon
+    geocode_source = venue.geocode_source or "miss"
+    geocode_query = None
 
-    # L2/L3: geocode_cache then Nominatim
-    if lat is None:
-        country_name = COUNTRY_CODE_TO_NAME.get(
-            (venue.country or "").lower(), (venue.country or "").upper()
-        )
-        if venue.name and _looks_like_postcode(venue.name):
-            q = f"{venue.name.strip()}, {country_name}" if country_name else venue.name.strip()
-            lat, lon, geocode_source = _geocode_and_cache(q, "postcode", conn)
-            geocode_query = q
-        elif venue.address and len(venue.address.strip()) > 3:
-            parts = [p for p in [venue.address.strip(), venue.city, country_name] if p]
-            q = ", ".join(parts)
-            lat, lon, geocode_source = _geocode_and_cache(q, "address", conn)
-            geocode_query = q
-        elif venue.city:
-            q = f"{venue.city}, {country_name}" if country_name else venue.city
-            lat, lon, geocode_source = _geocode_and_cache(q, "city", conn)
-            geocode_query = q
+    # Luma venues arrive pre-geocoded — skip Nominatim entirely
+    if geocode_source == "luma_google":
+        log.debug("Venue %s: using pre-geocoded Luma coords", venue.venue_id)
+    elif lat is None:
+        # L1: already geocoded in a previous run
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT lat, lon, geocode_source, geocode_query FROM venues WHERE id = %s",
+                (venue.venue_id,)
+            )
+            row = cur.fetchone()
+            if row and row["lat"] is not None:
+                lat, lon, geocode_source, geocode_query = (
+                    row["lat"], row["lon"], row["geocode_source"], row["geocode_query"]
+                )
+
+        # L2/L3: geocode_cache then Nominatim
+        if lat is None:
+            country_name = COUNTRY_CODE_TO_NAME.get(
+                (venue.country or "").lower(), (venue.country or "").upper()
+            )
+            if venue.name and _looks_like_postcode(venue.name):
+                q = f"{venue.name.strip()}, {country_name}" if country_name else venue.name.strip()
+                lat, lon, geocode_source = _geocode_and_cache(q, "postcode", conn)
+                geocode_query = q
+            elif venue.address and len(venue.address.strip()) > 3:
+                parts = [p for p in [venue.address.strip(), venue.city, country_name] if p]
+                q = ", ".join(parts)
+                lat, lon, geocode_source = _geocode_and_cache(q, "address", conn)
+                geocode_query = q
+            elif venue.city:
+                q = f"{venue.city}, {country_name}" if country_name else venue.city
+                lat, lon, geocode_source = _geocode_and_cache(q, "city", conn)
+                geocode_query = q
 
     params = venue.model_dump(mode="json")
     params["lat"] = lat
@@ -314,9 +335,6 @@ def run(settings: Settings) -> None:
     venue_fk_retry_buffer: dict[str, list[dict]] = {}
 
     with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as conn:
-        # Resolve run_id from the most recent scrape_runs row.
-        # Much more reliable than the RUN_ID env var which was never propagated
-        # to Fly workers. Falls back to env var if somehow the table is empty.
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM scrape_runs ORDER BY id DESC LIMIT 1")
             row = cur.fetchone()
@@ -325,6 +343,7 @@ def run(settings: Settings) -> None:
             _env = os.environ.get("RUN_ID")
             _run_id = int(_env) if _env else None
         log.info("Sink using run_id=%s", _run_id)
+
         try:
             while True:
                 msg = consumer.poll(timeout=5.0)

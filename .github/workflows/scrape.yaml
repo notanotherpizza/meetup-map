@@ -26,11 +26,11 @@ jobs:
       - name: Install flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Scale up workers and sink
+      - name: Scale up workers
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          flyctl scale count worker=3 sink=1 --app meetupmap-worker --yes
+          flyctl scale count worker=3 --app meetupmap-worker --yes
           echo "Waiting 30s for machines to start..."
           sleep 30
 
@@ -136,13 +136,13 @@ jobs:
               print("Timed out waiting for scrape — scaling down anyway")
           EOF
 
-      - name: Scale down workers and sink
+      - name: Scale down workers
         if: always()
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          flyctl scale count worker=0 sink=0 --app meetupmap-worker --yes
-          echo "Scaled down to 0."
+          flyctl scale count worker=0 --app meetupmap-worker --yes
+          echo "Workers scaled down to 0. Sink remains running."
 
   render-map:
     runs-on: ubuntu-latest

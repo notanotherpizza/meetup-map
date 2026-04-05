@@ -22,10 +22,11 @@ log = logging.getLogger(__name__)
 MEETUP_GQL_URL = "https://www.meetup.com/gql2"
 
 GROUP_HOME_HASH      = "012d7194e1b3746c687a04e05cdf39a25e33a7f8228bb3c563ee55432c718bee"
-# Queries below include rsvpCount which changes the hash — use empty strings
-# so the APQ retry path always fires and sends the full query body.
-PAST_EVENTS_HASH     = ""
-UPCOMING_EVENTS_HASH = ""
+# Queries below include rsvpCount which changes the original hashes.
+# Use a dummy invalid hash so Meetup returns PersistedQueryNotFound/Invalid
+# and we fall through to the full query retry path.
+PAST_EVENTS_HASH     = "0000000000000000000000000000000000000000000000000000000000000000"
+UPCOMING_EVENTS_HASH = "0000000000000000000000000000000000000000000000000000000000000000"
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -209,8 +210,9 @@ class MeetupPlatform(Platform):
         data = resp.json()
 
         errors = data.get("errors", [])
-        if any(e.get("extensions", {}).get("classification") == "PersistedQueryNotFound"
-               for e in errors):
+        if any(e.get("extensions", {}).get("classification") in (
+            "PersistedQueryNotFound", "PersistedQueryIdInvalid"
+        ) for e in errors):
             log.debug("PersistedQueryNotFound for %s — retrying with full query", operation)
             if operation in GQL_QUERIES:
                 payload["query"] = GQL_QUERIES[operation]

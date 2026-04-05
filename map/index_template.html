@@ -45,6 +45,11 @@ input.filter-input:focus { border-color: #111; }
 /* ── Results layout ── */
 #results-area { display: flex; max-width: 1100px; margin: 0 auto; padding: 12px 0; }
 
+/* ── Platform pill ── */
+.platform-pill { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 1px 5px; border-radius: 2px; margin-left: 4px; vertical-align: middle; }
+.platform-pill.meetup { background: #e8f4fd; color: #1a6fa8; border: 1px solid #b8d9f0; }
+.platform-pill.luma   { background: #fef3e8; color: #b85c00; border: 1px solid #f5d0a0; }
+
 /* ── Sidebar ── */
 #sidebar { width: 190px; flex-shrink: 0; padding: 4px 14px 8px 12px; border-right: 1px solid #e0e0e0; }
 .sidebar-section { margin-bottom: 18px; }
@@ -151,9 +156,8 @@ input.filter-input:focus { border-color: #111; }
 <body>
 
 <div id="topbar">
-  <a href="group_map.html">Full Screen Map</a>
-  <a href="https://discord.gg/sbjKAcQy">Discord</a>
-  <a href="https://notanother.pizza/">Updates</a>
+  <a href="group_map.html">Full map</a>
+  <a href="#">About</a>
 </div>
 
 <div id="hero">
@@ -236,6 +240,13 @@ input.filter-input:focus { border-color: #111; }
     </div>
 
     <!-- EVENT FILTERS -->
+    <div class="sidebar-section" id="sec-platform">
+      <div class="sidebar-title">Platform</div>
+      <div class="sidebar-item active" data-platform="all" onclick="togglePlatform(this,'all')">All</div>
+      <div class="sidebar-item" data-platform="meetup" onclick="togglePlatform(this,'meetup')">Meetup <span class="platform-pill meetup">Meetup</span></div>
+      <div class="sidebar-item" data-platform="luma" onclick="togglePlatform(this,'luma')">Luma <span class="platform-pill luma">Luma</span></div>
+    </div>
+
     <div class="sidebar-section" id="sec-date">
       <div class="sidebar-title">Date range</div>
       <div class="date-row">
@@ -290,7 +301,8 @@ const NETWORKS = __NETWORKS__;
 
 // ── State ─────────────────────────────────────────────────────────────────
 let currentView   = 'list';
-let activeNetwork = 'all';
+let activeNetwork  = 'all';
+let activePlatform = 'all';
 let activeStatus  = 'all';
 let activeOnline  = 'all';
 let minMembers    = 0;
@@ -303,14 +315,16 @@ let clusterGroup  = null;
 
 // ── Group id → lat/lon lookup for event map markers ───────────────────────
 const groupLatLon = {};
-const groupNetwork = {};
+const groupNetwork  = {};
+const groupPlatform = {};
 GROUPS.forEach(g => {
   if (g.lat && g.lon) groupLatLon[g.id] = { lat: g.lat, lon: g.lon, color: g.color };
-  groupNetwork[g.id] = g.network;
+  groupNetwork[g.id]  = g.network;
+  groupPlatform[g.id] = g.platform;
 });
 
 // ── Sidebar visibility by type ────────────────────────────────────────────
-const GROUP_SECTIONS  = ['sec-status','sec-members','sec-events-count','sec-scraped'];
+const GROUP_SECTIONS  = ['sec-status','sec-platform','sec-members','sec-events-count','sec-scraped'];
 const EVENT_SECTIONS  = ['sec-date','sec-online','sec-rsvp'];
 
 function updateSidebarVisibility() {
@@ -387,6 +401,13 @@ function toggleOnline(el, val) {
   runSearch();
 }
 
+function togglePlatform(el, val) {
+  document.querySelectorAll('[data-platform]').forEach(i => i.classList.remove('active'));
+  el.classList.add('active');
+  activePlatform = val;
+  runSearch();
+}
+
 // ── Search ────────────────────────────────────────────────────────────────
 function terms() {
   return document.getElementById('search-input').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -433,6 +454,7 @@ function getResults() {
   if (type !== 'events') {
     const gs = GROUPS.filter(g => {
       if (activeNetwork !== 'all' && g.network !== activeNetwork) return false;
+      if (activePlatform !== 'all' && g.platform !== activePlatform) return false;
       if (activeStatus === 'upcoming' && (g.upcoming || 0) <= 0) return false;
       if (activeStatus === 'active'   && g.event_status !== 'ok') return false;
       if ((g.members || 0) < minMembers) return false;
@@ -448,6 +470,7 @@ function getResults() {
   if (type !== 'groups' && EVENTS.length) {
     const es = EVENTS.filter(e => {
       if (activeNetwork !== 'all' && groupNetwork[e.group_id] !== activeNetwork) return false;
+      if (activePlatform !== 'all' && groupPlatform[e.group_id] !== activePlatform) return false;
       if (activeOnline === 'online'   && !e.is_online) return false;
       if (activeOnline === 'inperson' &&  e.is_online) return false;
       if ((e.rsvp_count || 0) < minRsvp) return false;
@@ -483,14 +506,16 @@ function renderGroup(g, ts) {
   const members = (g.members || 0).toLocaleString();
   const total   = (g.total_events || 0).toLocaleString();
   const upTag   = (g.upcoming || 0) > 0 ? `<span class="tag upcoming">${g.upcoming} upcoming</span>` : '';
-  const netTag  = net ? `<span class="tag network">${net}</span>` : '';
+  const netTag      = net ? `<span class="tag network">${net}</span>` : '';
+  const platformTag = g.platform && g.platform !== 'meetup'
+    ? `<span class="platform-pill ${g.platform}">${g.platform}</span>` : '';
   const loc     = [city, g.country || ''].filter(Boolean).join(', ');
   const crumb   = `notanotherpizza.com / groups / ${g.id || ''}`;
   return `<div class="result-item">
     <div class="result-crumb">${crumb}</div>
     <div class="result-title"><a href="${g.url || '#'}" target="_blank">${name}</a></div>
     <div class="result-snippet">${loc ? loc + ' &mdash; ' : ''}<strong>${members}</strong> members &middot; <strong>${total}</strong> past events</div>
-    <div class="result-tags">${netTag}${upTag}</div>
+    <div class="result-tags">${netTag}${platformTag}${upTag}</div>
   </div>`;
 }
 
@@ -655,7 +680,8 @@ function clearFilters() {
   document.getElementById('member-min-free').value = '';
   document.getElementById('evcount-min-free').value = '';
   document.getElementById('rsvp-min-free').value = '';
-  activeNetwork = 'all';
+  activeNetwork  = 'all';
+  activePlatform = 'all';
   activeStatus  = 'all';
   activeOnline  = 'all';
   minMembers = 0; minEvcount = 0; minRsvp = 0;
@@ -663,6 +689,8 @@ function clearFilters() {
   document.querySelector('[data-status="all"]').classList.add('active');
   document.querySelectorAll('[data-online]').forEach(i => i.classList.remove('active'));
   document.querySelector('[data-online="all"]').classList.add('active');
+  document.querySelectorAll('[data-platform]').forEach(i => i.classList.remove('active'));
+  document.querySelector('[data-platform="all"]').classList.add('active');
   document.querySelectorAll('.band-btn').forEach(b => b.classList.remove('active'));
   document.querySelector('#member-bands .band-btn[data-min="0"]').classList.add('active');
   document.querySelector('#events-count-bands .band-btn[data-min="0"]').classList.add('active');

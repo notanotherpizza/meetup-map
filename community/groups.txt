@@ -10,3 +10,4 @@
 #   https://lu.ma/my-luma-calendar
 
 https://www.meetup.com/rust-manchester/
+https://luma.com/ai-signals

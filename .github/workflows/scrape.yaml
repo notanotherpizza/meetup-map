@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       networks:
-        description: "Pro networks (space separated, or ALL)"
+        description: "Pro networks (space separated, or ALL, or COMMUNITY)"
         default: "ALL"
   schedule:
     - cron: "0 6 * * *" # every day at 06:00 UTC
@@ -74,41 +74,62 @@ jobs:
       - name: Wait for scrape to complete
         env:
           POSTGRES_URI: ${{ secrets.POSTGRES_URI }}
+          PRO_NETWORKS_STR: ${{ github.event.inputs.networks || 'ALL' }}
         run: |
           python - <<'EOF'
           import os, time, psycopg
 
           uri = os.environ["POSTGRES_URI"]
+          networks_str = os.environ.get("PRO_NETWORKS_STR", "ALL").upper()
           poll_interval = 60  # seconds
           max_wait = 9 * 3600  # 9 hours
 
-          print("Polling for scrape completion...")
+          # Community-only runs are fast — just a handful of groups
+          if networks_str == "COMMUNITY":
+              max_wait = 30 * 60  # 30 minutes is plenty
+
+          print(f"Polling for scrape completion (mode={networks_str})...")
           elapsed = 0
           while elapsed < max_wait:
               with psycopg.connect(uri) as pg:
                   with pg.cursor() as cur:
-                      cur.execute("""
-                        WITH run AS (
-                          SELECT started_at, networks FROM scrape_runs WHERE id = (SELECT MAX(id) FROM scrape_runs)
-                        ),
-                        total AS (
-                          SELECT COUNT(*) as n FROM groups
-                          WHERE pro_network = ANY(
-                            SELECT unnest(string_to_array(networks, ',')) FROM run
-                          )
-                        ),
-                        done AS (
-                          SELECT COUNT(*) as n FROM scrape_log
-                          WHERE scraped_at >= (SELECT started_at FROM run)
-                        )
-                        SELECT ROUND(100.0 * done.n / NULLIF(total.n, 0), 1) as value
-                        FROM done, total
-                      """)
-                      pct = cur.fetchone()[0]
-                      print(f"Progress: {pct}%")
-                      if pct is not None and pct >= 99.0:
-                          print("Scrape complete!")
-                          break
+                      if networks_str == "COMMUNITY":
+                          # For community runs, just wait until the community
+                          # groups have a recent last_scraped_at
+                          cur.execute("""
+                            SELECT COUNT(*) FROM groups
+                            WHERE pro_network = 'community'
+                              AND last_scraped_at >= now() - interval '1 hour'
+                          """)
+                          done = cur.fetchone()[0]
+                          print(f"Community groups scraped this run: {done}")
+                          if done > 0:
+                              print("Community scrape complete!")
+                              break
+                      else:
+                          cur.execute("""
+                            WITH run AS (
+                              SELECT started_at, networks FROM scrape_runs
+                              WHERE id = (SELECT MAX(id) FROM scrape_runs)
+                            ),
+                            total AS (
+                              SELECT COUNT(*) as n FROM groups
+                              WHERE pro_network = ANY(
+                                SELECT unnest(string_to_array(networks, ',')) FROM run
+                              )
+                            ),
+                            done AS (
+                              SELECT COUNT(*) as n FROM scrape_log
+                              WHERE scraped_at >= (SELECT started_at FROM run)
+                            )
+                            SELECT ROUND(100.0 * done.n / NULLIF(total.n, 0), 1) as value
+                            FROM done, total
+                          """)
+                          pct = cur.fetchone()[0]
+                          print(f"Progress: {pct}%")
+                          if pct is not None and pct >= 99.0:
+                              print("Scrape complete!")
+                              break
               time.sleep(poll_interval)
               elapsed += poll_interval
           else:

@@ -296,8 +296,24 @@ async def run(settings: Settings) -> None:
 
     producer = make_producer(settings)
 
+    networks_input = settings.pro_networks_str.upper()
+
+    # COMMUNITY mode: skip Pro Network discovery entirely, only seed community/groups.txt
+    if networks_input == "COMMUNITY":
+        log.info("Community-only mode — skipping Pro Network discovery")
+        community_groups = load_community_groups()
+        if community_groups:
+            seen_urlnames: set[str] = set()
+            total = seed_community_groups(community_groups, settings, producer, seen_urlnames)
+        else:
+            log.warning("No community groups found in community/groups.txt")
+            total = 0
+        producer.flush(timeout=30)
+        log.info("Community seed complete. %d groups published.", total)
+        return
+
     async with httpx.AsyncClient(timeout=60) as sitemap_client:
-        if settings.pro_networks_str.upper() == "ALL":
+        if networks_input == "ALL":
             networks = await fetch_all_networks(sitemap_client)
             log.info("Scraping ALL %d networks from sitemap", len(networks))
         else:

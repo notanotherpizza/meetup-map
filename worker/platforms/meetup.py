@@ -22,8 +22,10 @@ log = logging.getLogger(__name__)
 MEETUP_GQL_URL = "https://www.meetup.com/gql2"
 
 GROUP_HOME_HASH      = "012d7194e1b3746c687a04e05cdf39a25e33a7f8228bb3c563ee55432c718bee"
-PAST_EVENTS_HASH     = "321388b1e4a11b17a57efe3ae7a90abfecbc703a4f4e99519772294924c21351"
-UPCOMING_EVENTS_HASH = "066e3709c68718d5ce9dd909e979ac70f99835fb3722cef77756ded808d5ca08"
+# Queries below include rsvpCount which changes the hash — use empty strings
+# so the APQ retry path always fires and sends the full query body.
+PAST_EVENTS_HASH     = ""
+UPCOMING_EVENTS_HASH = ""
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -52,6 +54,7 @@ query getPastGroupEvents($urlname: String!, $beforeDateTime: String, $after: Str
       edges {
         node {
           id title eventUrl dateTime isOnline venueType
+          rsvpCount
           going { totalCount }
           venue { id name address city state country }
         }
@@ -67,6 +70,7 @@ query getUpcomingGroupEvents($urlname: String!, $afterDateTime: String) {
       edges {
         node {
           id title eventUrl dateTime isOnline venueType
+          rsvpCount
           going { totalCount }
           venue { id name address city state country }
         }
@@ -321,8 +325,13 @@ class MeetupPlatform(Platform):
         if is_online:
             venue_id = None
 
-        going = event.get("going") or {}
-        rsvp_count = going.get("totalCount") if isinstance(going, dict) else None
+        # rsvpCount matches what Meetup displays on the event page.
+        # going.totalCount only counts confirmed "Going" clicks — rsvpCount
+        # includes all attendee types and matches the displayed headcount.
+        rsvp_count = event.get("rsvpCount")
+        if rsvp_count is None:
+            going = event.get("going") or {}
+            rsvp_count = going.get("totalCount") if isinstance(going, dict) else None
 
         return EventRaw(
             event_id=event_id,

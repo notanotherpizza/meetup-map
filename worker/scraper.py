@@ -21,8 +21,6 @@ import os
 import sys
 
 import httpx
-from playwright.async_api import async_playwright
-
 from shared.kafka_client import make_consumer, make_producer, publish
 from shared.models import GroupSeed
 from shared.settings import Settings
@@ -138,47 +136,44 @@ async def run(settings: Settings) -> None:
     empty_polls = 0
     empty_polls_needed = 3
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        async with httpx.AsyncClient(timeout=30) as http_client:
-            try:
-                while True:
-                    msg = consumer.poll(timeout=5.0)
-                    if msg is None:
-                        if drain_mode:
-                            empty_polls += 1
-                            log.info(
-                                "No messages (%d/%d)...",
-                                empty_polls, empty_polls_needed,
-                            )
-                            if empty_polls >= empty_polls_needed:
-                                log.info("Topic drained — exiting.")
-                                break
-                        continue
-
-                    empty_polls = 0
-
-                    if msg.error():
-                        log.error("Kafka error: %s", msg.error())
-                        continue
-
-                    try:
-                        seed = GroupSeed(**json.loads(msg.value()))
-                        await process_seed(
-                            seed, producer, settings, http_client, browser
+    async with httpx.AsyncClient(timeout=30) as http_client:
+        try:
+            while True:
+                msg = consumer.poll(timeout=5.0)
+                if msg is None:
+                    if drain_mode:
+                        empty_polls += 1
+                        log.info(
+                            "No messages (%d/%d)...",
+                            empty_polls, empty_polls_needed,
                         )
+                        if empty_polls >= empty_polls_needed:
+                            log.info("Topic drained — exiting.")
+                            break
+                    continue
+
+                empty_polls = 0
+
+                if msg.error():
+                    log.error("Kafka error: %s", msg.error())
+                    continue
+
+                try:
+                    seed = GroupSeed(**json.loads(msg.value()))
+                    await process_seed(
+                        seed, producer, settings, http_client, None
+                    )
                         consumer.commit(msg)
                         await asyncio.sleep(settings.request_delay_seconds)
-                    except Exception as exc:
-                        log.error(
-                            "Failed to process %s: %s",
-                            msg.key(), exc, exc_info=True,
-                        )
-            except KeyboardInterrupt:
-                log.info("Shutting down...")
-            finally:
-                await browser.close()
-                consumer.close()
+                except Exception as exc:
+                    log.error(
+                        "Failed to process %s: %s",
+                        msg.key(), exc, exc_info=True,
+                    )
+        except KeyboardInterrupt:
+            log.info("Shutting down...")
+        finally:
+            consumer.close()
 
 
 def main() -> None:

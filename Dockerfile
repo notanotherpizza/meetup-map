@@ -8,4 +8,3 @@ COPY worker/ worker/
 COPY seed/ seed/
 COPY map/ map/
 RUN pip install .
-RUN playwright install chromium --with-deps

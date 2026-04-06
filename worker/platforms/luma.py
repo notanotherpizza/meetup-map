@@ -37,7 +37,7 @@ USER_AGENT = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 PAGE_TIMEOUT = 30_000   # ms
-INTER_PAGE_DELAY = 1.5  # seconds between event page loads
+INTER_PAGE_DELAY = 0.5  # seconds between event page loads
 
 
 class LumaPlatform(Platform):

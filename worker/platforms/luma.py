@@ -37,7 +37,7 @@ USER_AGENT = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 PAGE_TIMEOUT = 30_000   # ms
-INTER_PAGE_DELAY = 0.5  # seconds between event page loads
+INTER_PAGE_DELAY = 1.5  # seconds between event page loads
 
 
 class LumaPlatform(Platform):
@@ -154,8 +154,8 @@ class LumaPlatform(Platform):
         """
         Returns (calendar_dict, upcoming_slugs, past_slugs).
         """
-        await page.goto(url, wait_until="networkidle", timeout=PAGE_TIMEOUT)
-        await page.wait_for_timeout(2000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT)
+        await page.wait_for_timeout(500)
 
         next_data = await self._get_next_data(page)
         props = (next_data.get("props", {})
@@ -181,7 +181,7 @@ class LumaPlatform(Platform):
             past_btn = await page.query_selector("text=Past")
             if past_btn:
                 await past_btn.click()
-                await page.wait_for_timeout(2000)
+                await page.wait_for_timeout(500)
                 links = await page.eval_on_selector_all(
                     'a[href^="/"]',
                     'els => els.map(e => e.getAttribute("href"))'
@@ -210,8 +210,8 @@ class LumaPlatform(Platform):
         now: datetime,
     ) -> tuple[Optional[EventRaw], Optional[VenueRaw]]:
         url = f"{LUMA_BASE}/{slug}"
-        await page.goto(url, wait_until="networkidle", timeout=PAGE_TIMEOUT)
-        await page.wait_for_timeout(1000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT)
+        await page.wait_for_timeout(300)
 
         next_data = await self._get_next_data(page)
         props = (next_data.get("props", {})

@@ -3,10 +3,18 @@ worker/platforms/meetup.py
 ──────────────────────────
 Meetup.com platform scraper.
 
-Implements the Platform interface using Meetup's GQL2 persisted query API.
+Implements the Platform interface using Meetup's GQL2 API.
 No Playwright needed — pure HTTP via httpx.
 
-Logic extracted from the original worker/scraper.py with no behavioural changes.
+API notes (as of April 2026):
+- groupByUrlname returns null for some Pro Network groups (auth required)
+  These are logged as warnings and skipped gracefully.
+- filter.status must be an array of EventStatus enums: [ACTIVE, PAST, CANCELLED]
+- filter.beforeDateTime expects DateTime type (not String)
+- rsvpCount field no longer exists — use going.totalCount
+- venueType field no longer exists — use isOnline
+- Persisted queries (APQ) must omit the extensions.persistedQuery field entirely
+  on retry — Meetup rejects requests with a bad hash even with a full query body.
 """
 import asyncio
 import logging
@@ -21,12 +29,7 @@ log = logging.getLogger(__name__)
 
 MEETUP_GQL_URL = "https://www.meetup.com/gql2"
 
-GROUP_HOME_HASH      = "012d7194e1b3746c687a04e05cdf39a25e33a7f8228bb3c563ee55432c718bee"
-# Queries below include rsvpCount which changes the original hashes.
-# Use a dummy invalid hash so Meetup returns PersistedQueryNotFound/Invalid
-# and we fall through to the full query retry path.
-PAST_EVENTS_HASH     = "0000000000000000000000000000000000000000000000000000000000000000"
-UPCOMING_EVENTS_HASH = "0000000000000000000000000000000000000000000000000000000000000000"
+GROUP_HOME_HASH = "012d7194e1b3746c687a04e05cdf39a25e33a7f8228bb3c563ee55432c718bee"
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -38,6 +41,11 @@ GQL_QUERIES = {
     "groupHome": """
 query groupHome($urlname: String!, $includePrivateInfo: Boolean) {
   groupByUrlname(urlname: $urlname) {
+    name
+    city
+    country
+    lat
+    lon
     stats {
       memberCounts {
         all
@@ -47,15 +55,19 @@ query groupHome($urlname: String!, $includePrivateInfo: Boolean) {
 }
 """,
     "getPastGroupEvents": """
-query getPastGroupEvents($urlname: String!, $beforeDateTime: String, $after: String) {
+query getPastGroupEvents($urlname: String!, $beforeDateTime: DateTime, $after: String) {
   groupByUrlname(urlname: $urlname) {
-    events(input: {startDateBefore: $beforeDateTime}, after: $after, first: 20) {
+    events(
+      filter: { beforeDateTime: $beforeDateTime, status: [ACTIVE, PAST, CANCELLED] }
+      first: 20
+      sort: DESC
+      after: $after
+    ) {
       totalCount
       pageInfo { hasNextPage endCursor }
       edges {
         node {
-          id title eventUrl dateTime isOnline venueType
-          rsvpCount
+          id title eventUrl dateTime endTime isOnline
           going { totalCount }
           venue { id name address city state country }
         }
@@ -65,13 +77,16 @@ query getPastGroupEvents($urlname: String!, $beforeDateTime: String, $after: Str
 }
 """,
     "getUpcomingGroupEvents": """
-query getUpcomingGroupEvents($urlname: String!, $afterDateTime: String) {
+query getUpcomingGroupEvents($urlname: String!, $afterDateTime: DateTime) {
   groupByUrlname(urlname: $urlname) {
-    events(input: {startDateAfter: $afterDateTime}, first: 20) {
+    events(
+      filter: { afterDateTime: $afterDateTime, status: [ACTIVE, DRAFT] }
+      first: 20
+      sort: ASC
+    ) {
       edges {
         node {
-          id title eventUrl dateTime isOnline venueType
-          rsvpCount
+          id title eventUrl dateTime endTime isOnline
           going { totalCount }
           venue { id name address city state country }
         }
@@ -80,12 +95,6 @@ query getUpcomingGroupEvents($urlname: String!, $afterDateTime: String) {
   }
 }
 """,
-}
-
-HASHES = {
-    "groupHome": GROUP_HOME_HASH,
-    "getPastGroupEvents": PAST_EVENTS_HASH,
-    "getUpcomingGroupEvents": UPCOMING_EVENTS_HASH,
 }
 
 
@@ -123,6 +132,32 @@ class MeetupPlatform(Platform):
             except Exception:
                 group_home = {}
 
+        if group_home is None:
+            log.warning(
+                "groupByUrlname returned null for %s — group may require auth "
+                "(Pro Network restriction). Writing minimal record.",
+                seed.group_urlname,
+            )
+            now = datetime.now(timezone.utc)
+            duration_ms = int((asyncio.get_event_loop().time() - t_start) * 1000)
+            group = GroupRaw(
+                group_urlname=seed.group_urlname,
+                name=seed.name or seed.group_urlname,
+                pro_network=seed.pro_network,
+                platform="meetup",
+                city=seed.city,
+                country=seed.country,
+                member_count=seed.member_count,
+                source_url=seed.group_url,
+                scraped_at=now,
+                scrape_method="gql2_null",
+                events_scrape_ok=False,
+                total_past_events=None,
+                worker_id=worker_id,
+                scrape_duration_ms=duration_ms,
+            )
+            return ScrapeResult(group=group, venues=[], past_events=[], upcoming_events=[])
+
         log.info("  -> %d/%s past, %d upcoming | members: %s | events_ok: %s",
                  len(past),
                  total_past_count if total_past_count is not None else "?",
@@ -139,14 +174,23 @@ class MeetupPlatform(Platform):
             .get("all")
         )
 
+        # Prefer scraped data over seed data for location fields
+        city    = group_home.get("city")    or seed.city
+        country = group_home.get("country") or seed.country
+        lat     = group_home.get("lat")     or seed.lat
+        lon     = group_home.get("lon")     or seed.lon
+        name    = group_home.get("name")    or seed.name or seed.group_urlname
+
         group = GroupRaw(
             group_urlname=seed.group_urlname,
-            name=seed.name or seed.group_urlname,
+            name=name,
             pro_network=seed.pro_network,
             platform="meetup",
-            city=seed.city,
-            country=seed.country,
+            city=city,
+            country=country,
             member_count=member_count,
+            lat=lat,
+            lon=lon,
             source_url=seed.group_url,
             scraped_at=now,
             scrape_method="gql2",
@@ -167,7 +211,6 @@ class MeetupPlatform(Platform):
             venue_id = str(venue.get("id", "")).strip()
             is_online = (
                 event.get("isOnline", False)
-                or event.get("venueType") == "ONLINE"
                 or "online" in (venue.get("name") or "").lower()
             )
 
@@ -198,27 +241,44 @@ class MeetupPlatform(Platform):
         client: httpx.AsyncClient,
         operation: str,
         variables: dict,
-        hash_: str,
+        hash_: str = "",
     ) -> dict:
-        payload = {
+        # If we have a valid hash, try APQ first
+        if hash_:
+            payload = {
+                "operationName": operation,
+                "variables": variables,
+                "extensions": {"persistedQuery": {"version": 1, "sha256Hash": hash_}},
+            }
+            resp = await client.post(MEETUP_GQL_URL, json=payload, headers=HEADERS)
+            resp.raise_for_status()
+            data = resp.json()
+
+            errors = data.get("errors", [])
+            apq_miss = any(
+                e.get("extensions", {}).get("classification") in (
+                    "PersistedQueryNotFound", "PersistedQueryIdInvalid"
+                ) for e in errors
+            )
+            if not apq_miss:
+                if "errors" in data:
+                    raise ValueError(f"GQL errors in {operation}: {data['errors']}")
+                return data
+
+            log.debug("APQ miss for %s — retrying with full query, no hash", operation)
+
+        # Send full query without persistedQuery extension
+        if operation not in GQL_QUERIES:
+            raise ValueError(f"No query body for operation: {operation}")
+
+        retry_payload = {
             "operationName": operation,
             "variables": variables,
-            "extensions": {"persistedQuery": {"version": 1, "sha256Hash": hash_}},
+            "query": GQL_QUERIES[operation],
         }
-        resp = await client.post(MEETUP_GQL_URL, json=payload, headers=HEADERS)
+        resp = await client.post(MEETUP_GQL_URL, json=retry_payload, headers=HEADERS)
         resp.raise_for_status()
         data = resp.json()
-
-        errors = data.get("errors", [])
-        if any(e.get("extensions", {}).get("classification") in (
-            "PersistedQueryNotFound", "PersistedQueryIdInvalid"
-        ) for e in errors):
-            log.debug("PersistedQueryNotFound for %s — retrying with full query", operation)
-            if operation in GQL_QUERIES:
-                payload["query"] = GQL_QUERIES[operation]
-                resp = await client.post(MEETUP_GQL_URL, json=payload, headers=HEADERS)
-                resp.raise_for_status()
-                data = resp.json()
 
         if "errors" in data:
             raise ValueError(f"GQL errors in {operation}: {data['errors']}")
@@ -228,14 +288,15 @@ class MeetupPlatform(Platform):
         self,
         urlname: str,
         client: httpx.AsyncClient,
-    ) -> dict:
+    ) -> dict | None:
+        """Returns group home data, or None if groupByUrlname returned null."""
         try:
             data = await self._gql(
                 client, "groupHome",
                 {"urlname": urlname, "includePrivateInfo": False},
                 GROUP_HOME_HASH,
             )
-            return data.get("data", {}).get("groupByUrlname", {}) or {}
+            return data.get("data", {}).get("groupByUrlname")
         except Exception as exc:
             log.warning("groupHome failed for %s: %s", urlname, exc)
             return {}
@@ -256,10 +317,13 @@ class MeetupPlatform(Platform):
             variables = {"urlname": urlname, "beforeDateTime": now}
             if cursor:
                 variables["after"] = cursor
-            data = await self._gql(client, "getPastGroupEvents", variables, PAST_EVENTS_HASH)
-            events_data = (data.get("data", {})
-                           .get("groupByUrlname", {})
-                           .get("events", {}))
+            data = await self._gql(client, "getPastGroupEvents", variables)
+            group_data = data.get("data", {}).get("groupByUrlname")
+
+            if group_data is None:
+                raise ValueError(f"groupByUrlname returned null for {urlname}")
+
+            events_data = group_data.get("events", {})
 
             if total_past_count is None:
                 total_past_count = events_data.get("totalCount")
@@ -274,13 +338,11 @@ class MeetupPlatform(Platform):
         data = await self._gql(
             client, "getUpcomingGroupEvents",
             {"urlname": urlname, "afterDateTime": now},
-            UPCOMING_EVENTS_HASH,
         )
-        edges = (data.get("data", {})
-                     .get("groupByUrlname", {})
-                     .get("events", {})
-                     .get("edges", []))
-        upcoming.extend(edge["node"] for edge in edges if "node" in edge)
+        group_data = data.get("data", {}).get("groupByUrlname")
+        if group_data:
+            edges = group_data.get("events", {}).get("edges", [])
+            upcoming.extend(edge["node"] for edge in edges if "node" in edge)
 
         capped_past = past if max_events == 0 else past[:max_events]
         return capped_past, upcoming, total_past_count
@@ -313,7 +375,18 @@ class MeetupPlatform(Platform):
         starts_at = None
         if "dateTime" in event:
             try:
-                starts_at = datetime.fromisoformat(event["dateTime"])
+                starts_at = datetime.fromisoformat(
+                    event["dateTime"].replace("Z", "+00:00")
+                )
+            except Exception:
+                pass
+
+        ends_at = None
+        if "endTime" in event:
+            try:
+                ends_at = datetime.fromisoformat(
+                    event["endTime"].replace("Z", "+00:00")
+                )
             except Exception:
                 pass
 
@@ -321,19 +394,13 @@ class MeetupPlatform(Platform):
         venue_id = str(venue.get("id", "")).strip() or None
         is_online = (
             event.get("isOnline", False)
-            or event.get("venueType") == "ONLINE"
             or "online" in (venue.get("name") or "").lower()
         )
         if is_online:
             venue_id = None
 
-        # rsvpCount matches what Meetup displays on the event page.
-        # going.totalCount only counts confirmed "Going" clicks — rsvpCount
-        # includes all attendee types and matches the displayed headcount.
-        rsvp_count = event.get("rsvpCount")
-        if rsvp_count is None:
-            going = event.get("going") or {}
-            rsvp_count = going.get("totalCount") if isinstance(going, dict) else None
+        going = event.get("going") or {}
+        rsvp_count = going.get("totalCount") if isinstance(going, dict) else None
 
         return EventRaw(
             event_id=event_id,
@@ -344,6 +411,7 @@ class MeetupPlatform(Platform):
             is_online=is_online,
             venue_id=venue_id,
             starts_at=starts_at,
+            ends_at=ends_at,
             rsvp_count=rsvp_count,
             scraped_at=now,
             scrape_method="gql2",

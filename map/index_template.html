@@ -510,7 +510,7 @@ function renderGroup(g, ts) {
   const platformTag = g.platform && g.platform !== 'meetup'
     ? `<span class="platform-pill ${g.platform}">${g.platform}</span>` : '';
   const loc     = [city, g.country || ''].filter(Boolean).join(', ');
-  const crumb   = `notanotherpizza.com / groups / ${g.id || ''}`;
+  const crumb   = `notanother.pizza / groups / ${g.id || ''}`;
   return `<div class="result-item">
     <div class="result-crumb">${crumb}</div>
     <div class="result-title"><a href="${g.url || '#'}" target="_blank">${name}</a></div>
@@ -527,7 +527,7 @@ function renderEvent(e, ts) {
   const upTag     = e.status === 'upcoming' ? '<span class="tag upcoming">Upcoming</span>' : '';
   const onlineTag = e.is_online ? '<span class="tag online">Online</span>' : '';
   const loc       = [e.city, e.country || ''].filter(Boolean).join(', ');
-  const crumb     = `notanotherpizza.com / events / ${e.id || ''}`;
+  const crumb     = `notanother.pizza / events / ${e.id || ''}`;
   return `<div class="result-item">
     <div class="result-crumb">${crumb}</div>
     <div class="result-title"><a href="${e.event_url || '#'}" target="_blank">${title}</a></div>

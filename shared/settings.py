@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     )
 
     # Kafka
-    kafka_bootstrap_servers: str
+    kafka_bootstrap_servers: str = ""
     kafka_ssl_ca_file: str = "./certs/ca.pem"
     kafka_ssl_cert_file: str = "./certs/service.cert"
     kafka_ssl_key_file: str = "./certs/service.key"

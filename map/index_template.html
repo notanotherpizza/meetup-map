@@ -514,7 +514,7 @@ function renderGroup(g, ts) {
   return `<div class="result-item">
     <div class="result-crumb">${crumb}</div>
     <div class="result-title"><a href="${g.url || '#'}" target="_blank">${name}</a></div>
-    <div class="result-snippet">${loc ? loc + ' &mdash; ' : ''}<strong>${members}</strong> members &middot; <strong>${total}</strong> past events</div>
+    <div class="result-snippet">${loc ? loc + ' &mdash; ' : ''}${members !== '0' ? `<strong>${members}</strong> members &middot; ` : ''}<strong>${total}</strong> past events</div>
     <div class="result-tags">${netTag}${platformTag}${upTag}</div>
   </div>`;
 }
@@ -600,7 +600,7 @@ function renderMap(items) {
       marker.bindPopup(`
         <div class="popup-name">${item.name}</div>
         <div class="popup-meta">${loc}</div>
-        <div class="popup-meta">${(item.members||0).toLocaleString()} members &middot; ${item.total_events||0} events</div>
+        <div class="popup-meta">${item.members ? item.members.toLocaleString() + ' members &middot; ' : ''}${item.total_events||0} events</div>
         ${up ? `<div style="margin-top:4px">${up}</div>` : ''}
         ${item.url ? `<div style="margin-top:5px"><a class="popup-url" href="${item.url}" target="_blank">View on Meetup</a></div>` : ''}
       `, { maxWidth: 240 });

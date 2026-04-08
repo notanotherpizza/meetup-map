@@ -1,143 +1,148 @@
-# MeetupMap
+# meetup-map
 
-A distributed Meetup group and event scraper built on **Aiven Kafka** and **Aiven Postgres**.
+A community-maintained index of meetup groups and events, searchable at **[search.notanother.pizza](https://search.notanother.pizza)**.
 
-A seed producer publishes one message per group to a Kafka topic. Workers consume those messages, scrape group metadata and events, and publish raw JSON to two further topics. A sink consumer reads the raw topics and upserts into Postgres.
+The index is built by a distributed scraper. Anyone can contribute by submitting a group to be listed, or by running a worker to help scrape groups faster.
+
+---
+
+## Add your group
+
+The easiest way to get listed. No coding required — just edit one text file and open a pull request.
+
+### Step-by-step (first time on GitHub)
+
+**1. Create a GitHub account**
+
+Go to [github.com](https://github.com) and sign up for a free account if you don't have one.
+
+**2. Fork this repository**
+
+Click the **Fork** button at the top right of this page. This creates your own copy of the project under your GitHub account.
+
+**3. Edit `community/groups.txt`**
+
+In your forked repo, navigate to `community/groups.txt` and click the pencil icon (✏️) to edit it.
+
+Add your group URL on a new line:
 
 ```
-Seed producer → [groups-to-scrape] → Workers → [groups-raw] → Sink → Postgres
-                                              → [events-raw]  ↗
+https://www.meetup.com/your-group-name/
+https://lu.ma/your-calendar-slug
 ```
+
+One URL per line. Both Meetup and Luma are supported. The URL should be the public page for your group or calendar.
+
+**4. Commit the change**
+
+Scroll down to the **Commit changes** section. Add a short description like `Add PyData Bristol` and click **Commit changes**.
+
+**5. Open a pull request**
+
+Click **Contribute → Open pull request** at the top of your forked repo. Add a brief description of your group and click **Create pull request**.
+
+**6. Wait for review**
+
+Once the PR is merged your group will be scraped and appear in the search index within 24 hours.
+
+**Supported platforms:**
+- [Meetup.com](https://meetup.com) — any public group
+- [Luma](https://lu.ma) — any public calendar
+
+---
+
+## Run a worker
+
+Workers scrape group pages and publish the results to the shared message queue. Running a worker helps the index stay fresh and increases scraping capacity. The more workers running, the faster new groups get indexed.
 
 Total workers from last run: 3
 
-Workers are stateless — run as many as you want locally, in Docker, on GitHub Actions, or on Fly.io.
+### What is a worker?
 
+A worker is a small Python process that:
+1. Picks up a group from a queue
+2. Scrapes its events and metadata from Meetup or Luma
+3. Publishes the raw results back to the queue for the sink to store
 
----
+Workers are **stateless**: they don't write to any database directly. All they need is a Kafka connection. This means you can run as many as you like, on any machine, without risking data corruption.
 
-## Quick start (local)
+### Why would I want to run one?
 
-### 1. Aiven services
+- **You run a large meetup network** and want to make sure your groups are scraped frequently and reliably
+- **You want to contribute compute** to the project without managing infrastructure
+- **You want to extend the scraper**.  The worker architecture makes it easy to add support for new platforms (Eventbrite, Facebook Events, etc.) by implementing a new `Platform` class
+- **You want to index your own platform** . The scraper isn't tied to the community seed. You can bypass the seed producer entirely and publish your own `GroupSeed` messages to the Kafka topic from your own system. This means any platform that can produce a group URL and basic metadata can feed into the index, whether that's a custom events platform, a university society system, or anything else
 
-Create two Aiven services:
-- **Kafka** — any plan, Kafka 3.x
-- **Postgres** — any plan, PG 15+
+### Request access
 
-From the Kafka service page → **Connection information**:
-- Download `ca.pem`, `service.cert`, `service.key` into `./certs/`
-- Copy the **Service URI** (bootstrap servers)
+To run a worker you need credentials for the shared Aiven Kafka instance. Open an issue or message in the [notanother.pizza Discord](https://discord.notanother.pizza) to request access. You will receive a `.env` file containing the Kafka connection details.
 
-From the Postgres service page:
-- Copy the **Service URI** (connection string)
+Note: **the sink (database writer) is not available to community runners** the data contracts (and rate limiting) are enforced at the sink level.
 
-### 2. Configure
-
-```bash
-cp .env.example .env
-# Edit .env with your Aiven URIs and cert paths
-```
-
-### 3. Install
+### Set up
 
 ```bash
+git clone https://github.com/notanotherpizza/meetup-map
+cd meetup-map
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
-playwright install chromium
 ```
 
-### 4. Create Postgres schema
+Copy your `.env` file into the repo root.
+
+### Run
 
 ```bash
-psql $POSTGRES_URI -f infra/postgres/schema.sql
-```
-
-### 5. Run the seed producer
-
-```bash
-python -m seed.producer
-# or: meetupmap-seed
-```
-
-This will:
-1. Create the three Kafka topics if they don't exist
-2. Fetch all groups from meetup.com/pro/pydata (and any other networks in `PRO_NETWORKS`)
-3. Publish one `GroupSeed` message per group to `groups-to-scrape`
-
----
-
-## Running workers (once built)
-
-```bash
-# One worker:
+source .env
 python -m worker.scraper
+```
 
-# Multiple workers (they share the consumer group, work is distributed):
+Workers are stateless — run as many as you want. They share a Kafka consumer group so work is automatically distributed between them.
+
+```bash
+# Run three workers in parallel
+source .env
 python -m worker.scraper &
 python -m worker.scraper &
 python -m worker.scraper &
 ```
 
-## Docker
+### Docker
 
 ```bash
 docker build -t meetupmap .
 
-# Seed
-docker run --env-file .env -v $(pwd)/certs:/app/certs meetupmap seed.producer
-
-# Worker
-docker run --env-file .env -v $(pwd)/certs:/app/certs meetupmap worker.scraper
-
-# Sink
-docker run --env-file .env -v $(pwd)/certs:/app/certs meetupmap sink.consumer
+# Worker only — all that's needed for community runners
+docker run --env-file .env meetupmap python -m worker.scraper
 ```
 
 ---
 
-## GitHub Actions secrets
-
-For the seed workflow (`.github/workflows/seed.yml`), add these secrets to your repo:
-
-| Secret | Value |
-|---|---|
-| `KAFKA_BOOTSTRAP_SERVERS` | from Aiven Kafka → Connection info |
-| `KAFKA_CA_PEM` | contents of `ca.pem` |
-| `KAFKA_SERVICE_CERT` | contents of `service.cert` |
-| `KAFKA_SERVICE_KEY` | contents of `service.key` |
-| `POSTGRES_URI` | from Aiven Postgres → Connection info |
-
----
-
-## Project layout
+## How it works
 
 ```
-meetupmap/
-├── seed/           # Seed producer
-│   └── producer.py
-├── worker/         # Scraping workers
-│   └── scraper.py
-├── sink/           # Sink consumer
-│   └── consumer.py
-├── shared/         # Config, Kafka helpers, Pydantic models
-│   ├── settings.py
-│   ├── kafka_client.py
-│   └── models.py
-├── infra/
-│   ├── kafka/      # Topic config reference
-│   └── postgres/
-│       └── schema.sql
-├── .env.example
-├── Dockerfile
-└── pyproject.toml
+Seed producer → [groups-to-scrape] → Workers → [groups-raw]  → Sink → Postgres → Renderer → GitHub Pages
+                                              → [venues-raw]  ↗
+                                              → [events-raw]  ↗
 ```
 
-## Adding more networks
+1. The **seed producer** publishes one message per group to the `groups-to-scrape` Kafka topic
+2. **Workers** consume those messages, scrape group metadata and events from Meetup or Luma, and publish raw JSON to output topics
+3. The **sink consumer** reads the raw topics and upserts into Postgres — this runs centrally and is not available to community runners
+4. The **map renderer** queries Postgres and generates the static search and map pages deployed to GitHub Pages
 
-Set `PRO_NETWORKS` in `.env` to a space-separated list:
+### Adding a new platform
 
+Implement `worker/platforms/base.py`'s `Platform` interface:
+
+```python
+class MyPlatform(Platform):
+    def can_handle(self, url: str) -> bool:
+        return "myplatform.com" in url
+
+    async def scrape(self, seed, browser, http_client, max_past_events, worker_id):
+        # fetch data, return ScrapeResult
+        ...
 ```
-PRO_NETWORKS=pydata kaggle tensorflow
-```
 
-The seed producer will loop over all of them. Workers and the sink are network-agnostic.
+Register it in `worker/scraper.py` and it will be picked up automatically for any seed URL that matches.

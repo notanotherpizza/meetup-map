@@ -724,6 +724,37 @@ document.getElementById('search-input').addEventListener('keydown', e => {
 updateSidebarVisibility();
 renderNetworkList();
 runSearch();
+
+// ── URL param handling ────────────────────────────────────────────────────
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  const q = params.get('q');
+  const loc = params.get('loc');
+  const network = params.get('network');
+  const platform = params.get('platform');
+
+  if (q) {
+    document.getElementById('search-input').value = q;
+  }
+  if (loc) {
+    document.getElementById('filter-location').value = loc;
+  }
+  if (network) {
+    const match = NETWORKS.find(n => n.name.toLowerCase() === network.toLowerCase());
+    if (match) {
+      activeNetwork = match.name;
+      renderNetworkList();
+    }
+  }
+  if (platform && ['meetup','luma'].includes(platform)) {
+    activePlatform = platform;
+    document.querySelectorAll('[data-platform]').forEach(i => i.classList.remove('active'));
+    const el = document.querySelector(`[data-platform="${platform}"]`);
+    if (el) el.classList.add('active');
+  }
+
+  if (q || loc || network || platform) runSearch();
+})();
 </script>
 </body>
 </html>

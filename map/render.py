@@ -794,6 +794,16 @@ def main() -> None:
             shutil.copy2(src, DOCS_DIR / asset)
             log.info("Copied %s -> docs/", asset)
 
+    # ── stats.json ────────────────────────────────────────────────────────────
+    stats = {
+        "groups": len(groups),
+        "events": sum(int(g["total_events_in_db"] or 0) for g in groups),
+        "platforms": len(set(g["platform"] for g in groups if g.get("platform"))),
+        "generated_at": generated_at,
+    }
+    (DOCS_DIR / "stats.json").write_text(json.dumps(stats))
+    log.info("Written docs/stats.json")
+
     # ── README update ─────────────────────────────────────────────────────
     readme_path = Path("README.md")
     if readme_path.exists():

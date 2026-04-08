@@ -6,7 +6,7 @@ on:
         description: "Pro networks (space separated, or ALL, or COMMUNITY)"
         default: "ALL"
   schedule:
-    - cron: "0 6 * * *" # every day at 06:00 UTC
+    - cron: "0 2 * * *" # every day at 02:00 UTC
 concurrency:
   group: scrape
   cancel-in-progress: false

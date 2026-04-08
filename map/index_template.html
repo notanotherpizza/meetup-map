@@ -720,7 +720,7 @@ function setView(v) {
   }
 }
 
-document.getElementById('search-input').addEventListener('keydown', e => {
+const searchInput = document.getElementById('search-input'); if (searchInput) searchInput.addEventListener('keydown', e => {
   if (e.key === 'Enter') runSearch();
 });
 

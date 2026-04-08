@@ -11,3 +11,4 @@
 
 https://www.meetup.com/rust-manchester/
 https://luma.com/ai-signals
+https://luma.com/aiven

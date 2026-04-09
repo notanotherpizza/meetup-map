@@ -42,6 +42,51 @@ def network_colour(network: str) -> str:
 def fetch_groups(pg: psycopg.Connection) -> list[dict]:
     with pg.cursor(row_factory=dict_row) as cur:
         cur.execute("""
+            WITH last_venue AS (
+                SELECT DISTINCT ON (e.group_id)
+                    e.group_id,
+                    v.lat,
+                    v.lon,
+                    v.geocode_source
+                FROM events e
+                JOIN venues v ON v.id = e.venue_id
+                WHERE e.status = 'past'
+                  AND v.lat IS NOT NULL
+                  AND v.lon IS NOT NULL
+                ORDER BY e.group_id, e.starts_at DESC
+            )
+            SELECT
+                g.id,
+                g.name,
+                g.city,
+                g.country,
+                g.lat,
+                g.lon,
+                g.member_count,
+                g.source_url,
+                g.platform,
+                g.pro_network,
+                g.last_scraped_at,
+                g.events_scraped_at,
+                g.total_past_events,
+                COUNT(e.id)                                         AS total_events_in_db,
+                COUNT(e.id) FILTER (WHERE e.status = 'upcoming')   AS upcoming_events,
+                MAX(e.starts_at) FILTER (
+                    WHERE e.status = 'past'
+                )                                                   AS last_event_at,
+                lv.lat                                              AS last_event_lat,
+                lv.lon                                              AS last_event_lon,
+                lv.geocode_source                                   AS last_event_geocode_source
+            FROM groups g
+            LEFT JOIN events e ON e.group_id = g.id
+            LEFT JOIN last_venue lv ON lv.group_id = g.id
+            WHERE g.lat IS NOT NULL AND g.lon IS NOT NULL
+            GROUP BY g.id, lv.lat, lv.lon, lv.geocode_source
+            ORDER BY g.name
+        """)
+        return cur.fetchall()
+    with pg.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
             SELECT
                 g.id,
                 g.name,

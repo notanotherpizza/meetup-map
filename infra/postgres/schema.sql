@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS geocode_cache (
 -- Scrape run tracking
 CREATE TABLE IF NOT EXISTS scrape_runs (
     id          SERIAL      PRIMARY KEY,
-    networks    TEXT,                           -- comma-separated list or "ALL"
+    networks    TEXT,       -- run mode: "ALL", "COMMUNITY", "DISCOVERED", or space-separated network names
     started_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -97,9 +97,50 @@ CREATE TABLE IF NOT EXISTS scrape_log (
     group_id        TEXT        REFERENCES groups(id),
     pro_network     TEXT,
     events_scraped  INT,
+    geocode_level   INT,
     duration_ms     INT,
-    scraped_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    error           TEXT,
+    scraped_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT scrape_log_run_group_uniq UNIQUE (run_id, group_id)
 );
+
+-- Live DB migrations: idempotent, safe to re-run
+DO $$ BEGIN
+    -- Add geocode_level if missing
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'scrape_log' AND column_name = 'geocode_level'
+    ) THEN
+        ALTER TABLE scrape_log ADD COLUMN geocode_level INT;
+    END IF;
+
+    -- Add error column if missing
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'scrape_log' AND column_name = 'error'
+    ) THEN
+        ALTER TABLE scrape_log ADD COLUMN error TEXT;
+    END IF;
+
+    -- Add unique constraint on (run_id, group_id) if missing.
+    -- Deduplicates existing rows first, keeping the earliest per pair.
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'scrape_log_run_group_uniq'
+    ) THEN
+        DELETE FROM scrape_log
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM scrape_log
+            WHERE run_id IS NOT NULL
+            GROUP BY run_id, group_id
+        )
+        AND run_id IS NOT NULL;
+
+        ALTER TABLE scrape_log
+            ADD CONSTRAINT scrape_log_run_group_uniq UNIQUE (run_id, group_id);
+    END IF;
+END $$;
 
 -- Triggers to keep updated_at fresh
 CREATE OR REPLACE FUNCTION touch_updated_at() RETURNS TRIGGER LANGUAGE plpgsql AS $$

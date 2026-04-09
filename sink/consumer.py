@@ -97,6 +97,11 @@ def _geocode_and_cache(
 
 # ── SQL ───────────────────────────────────────────────────────────────────────
 
+# FIX: pro_network is only updated when the incoming tag has >= priority to the
+# existing one. Priority (highest first): real pro network slug (100) >
+# "community" (10) > "discovered_meetup" / "discovered_luma" (5).
+# Any tag not in the CASE expression is treated as a real pro network slug and
+# always wins.
 UPSERT_GROUP = """
 INSERT INTO groups (
     id, name, pro_network, platform, city, country, lat, lon,
@@ -120,6 +125,21 @@ ON CONFLICT (id) DO UPDATE SET
     last_scraped_at   = EXCLUDED.last_scraped_at,
     events_scraped_at = COALESCE(EXCLUDED.events_scraped_at, groups.events_scraped_at),
     total_past_events = COALESCE(EXCLUDED.total_past_events, groups.total_past_events),
+    -- Only upgrade pro_network, never downgrade.
+    -- Incoming priority: real slug > "community" > "discovered_*"
+    -- We compute priority as an integer and take the higher value.
+    pro_network       = CASE
+        WHEN EXCLUDED.pro_network NOT IN (
+            'community', 'discovered_meetup', 'discovered_luma'
+        ) THEN EXCLUDED.pro_network  -- real pro network slug always wins
+        WHEN groups.pro_network NOT IN (
+            'community', 'discovered_meetup', 'discovered_luma'
+        ) THEN groups.pro_network    -- existing real slug beats any lower tag
+        WHEN EXCLUDED.pro_network = 'community'
+             AND groups.pro_network IN ('discovered_meetup', 'discovered_luma')
+        THEN EXCLUDED.pro_network    -- community beats discovered_*
+        ELSE groups.pro_network      -- keep existing (equal or higher priority)
+    END,
     updated_at        = now()
 """
 
@@ -189,9 +209,35 @@ ON CONFLICT (id) DO UPDATE SET
     updated_at      = now()
 """
 
+# FIX: ON CONFLICT DO NOTHING on (run_id, group_id) prevents duplicate scrape_log
+# rows from at-least-once Kafka delivery. Requires the unique constraint added
+# in schema.sql migration below.
+INSERT_SCRAPE_LOG = """
+INSERT INTO scrape_log
+    (run_id, worker_id, group_id, pro_network, duration_ms)
+VALUES
+    (%s, %s, %s, %s, %s)
+ON CONFLICT (run_id, group_id) DO NOTHING
+"""
+
+
+# ── run_id helper ─────────────────────────────────────────────────────────────
+
+def _fetch_current_run_id(conn: psycopg.Connection) -> int | None:
+    """
+    Return the most recent scrape_runs.id. Called once per group message so
+    the sink automatically picks up new runs started after the sink launched,
+    without needing a restart.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM scrape_runs ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        return row["id"] if row else None
+
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
-def handle_group(payload: dict, conn: psycopg.Connection, run_id: int | None = None) -> None:
+def handle_group(payload: dict, conn: psycopg.Connection) -> None:
     group = GroupRaw(**payload)
 
     lat, lon = group.lat, group.lon
@@ -223,12 +269,13 @@ def handle_group(payload: dict, conn: psycopg.Connection, run_id: int | None = N
     with conn.cursor() as cur:
         cur.execute(UPSERT_GROUP, params)
 
+    # FIX: fetch run_id fresh from DB on each group message so the sink
+    # automatically tracks whichever run is currently active, even if it
+    # was started after the sink process launched.
+    run_id = _fetch_current_run_id(conn)
+
     with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO scrape_log
-                (run_id, worker_id, group_id, pro_network, duration_ms)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (
+        cur.execute(INSERT_SCRAPE_LOG, (
             run_id,
             group.worker_id,
             group.group_urlname,
@@ -335,15 +382,6 @@ def run(settings: Settings) -> None:
     venue_fk_retry_buffer: dict[str, list[dict]] = {}
 
     with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM scrape_runs ORDER BY id DESC LIMIT 1")
-            row = cur.fetchone()
-            _run_id: int | None = row["id"] if row else None
-        if _run_id is None:
-            _env = os.environ.get("RUN_ID")
-            _run_id = int(_env) if _env else None
-        log.info("Sink using run_id=%s", _run_id)
-
         try:
             while True:
                 msg = consumer.poll(timeout=5.0)
@@ -375,7 +413,7 @@ def run(settings: Settings) -> None:
                     payload = json.loads(msg.value())
 
                     if topic == settings.topic_groups_raw:
-                        handle_group(payload, conn, run_id=_run_id)
+                        handle_group(payload, conn)
                         groups_written += 1
 
                     elif topic == settings.topic_venues_raw:

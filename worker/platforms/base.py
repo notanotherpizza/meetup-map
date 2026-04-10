@@ -46,7 +46,6 @@ class Platform(ABC):
     async def scrape(
         self,
         seed: GroupSeed,
-        browser: Browser,
         http_client: httpx.AsyncClient,
         max_past_events: int,
         worker_id: str,

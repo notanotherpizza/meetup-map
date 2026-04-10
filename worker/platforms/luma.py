@@ -26,7 +26,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from playwright.async_api import Browser
 
 from shared.models import EventRaw, GroupRaw, GroupSeed, VenueRaw
 from worker.platforms.base import Platform, ScrapeResult
@@ -55,7 +54,7 @@ class LumaPlatform(Platform):
     async def scrape(
         self,
         seed: GroupSeed,
-        browser: Browser,  # unused — kept for interface compatibility
+        browser,  # unused — kept for interface compatibility
         http_client: httpx.AsyncClient,
         max_past_events: int,
         worker_id: str,

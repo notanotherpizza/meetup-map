@@ -55,7 +55,7 @@ Once the PR is merged your group will be scraped and appear in the search index 
 
 Workers scrape group pages and publish the results to the shared message queue. Running a worker helps the index stay fresh and increases scraping capacity. The more workers running, the faster new groups get indexed.
 
-Total workers from last run: 3
+Total workers from last run: 1
 
 ### What is a worker?
 

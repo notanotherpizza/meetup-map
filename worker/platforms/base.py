@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import httpx
-from playwright.async_api import Browser
+
 
 from shared.models import EventRaw, GroupRaw, GroupSeed, VenueRaw
 

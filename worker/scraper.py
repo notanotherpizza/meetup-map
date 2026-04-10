@@ -163,8 +163,8 @@ async def run(settings: Settings) -> None:
                     await process_seed(
                         seed, producer, settings, http_client, None
                     )
-                        consumer.commit(msg)
-                        await asyncio.sleep(settings.request_delay_seconds)
+                    consumer.commit(msg)
+                    await asyncio.sleep(settings.request_delay_seconds)
                 except Exception as exc:
                     log.error(
                         "Failed to process %s: %s",

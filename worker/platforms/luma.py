@@ -1,17 +1,17 @@
 """
 worker/platforms/luma.py
 ────────────────────────
-Luma (lu.ma) platform scraper.
+Luma (luma.com) platform scraper.
 
 Implements the Platform interface using plain httpx — no Playwright needed.
 Luma embeds full event data in __NEXT_DATA__ on every page, accessible
 without JavaScript execution.
 
 Scraping strategy:
-  1. GET lu.ma/<slug> — parse __NEXT_DATA__ for calendar metadata +
+  1. GET luma.com/<slug> — parse __NEXT_DATA__ for calendar metadata +
      upcoming event slugs (featured_items), then GET the same URL with
      ?period=past to get past event slugs from page links
-  2. GET lu.ma/<event_slug> for each event — parse __NEXT_DATA__ for
+  2. GET luma.com/<event_slug> for each event — parse __NEXT_DATA__ for
      full event data
 
 Venue geocoding: Luma provides Google place_id and full address on event
@@ -32,7 +32,7 @@ from worker.platforms.base import Platform, ScrapeResult
 
 log = logging.getLogger(__name__)
 
-LUMA_BASE = "https://lu.ma"
+LUMA_BASE = "https://luma.com"
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -62,8 +62,8 @@ class LumaPlatform(Platform):
         t_start = asyncio.get_event_loop().time()
         now = datetime.now(timezone.utc)
 
-        # Normalise URL: luma.com → lu.ma
-        url = seed.group_url.replace("luma.com/", "lu.ma/")
+        # Normalise URL: lu.ma to luma.com, ensure it has a slug we can extract
+        url = seed.group_url.replace("lu.ma/", "luma.com/")
         slug = url.rstrip("/").split("/")[-1]
 
         # ── Step 1: calendar page ─────────────────────────────────────────

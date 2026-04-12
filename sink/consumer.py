@@ -95,6 +95,23 @@ def _geocode_and_cache(
     return lat, lon, source
 
 
+def _build_address_query(address: str, city: str | None, country_name: str | None) -> str:
+    """Build a Nominatim query string from address parts.
+
+    Avoids appending city/country if they're already present in the address
+    string — Meetup often returns full addresses like "55-57 Rivington St,
+    London EC2A 3QA, United Kingdom" which causes cache misses when city and
+    country are naively appended again.
+    """
+    addr = address.strip()
+    parts = [addr]
+    if city and city.lower() not in addr.lower():
+        parts.append(city)
+    if country_name and country_name.lower() not in addr.lower():
+        parts.append(country_name)
+    return ", ".join(parts)
+
+
 # ── SQL ───────────────────────────────────────────────────────────────────────
 
 # FIX: pro_network is only updated when the incoming tag has >= priority to the
@@ -322,8 +339,11 @@ def handle_venue(payload: dict, conn: psycopg.Connection) -> None:
                 lat, lon, geocode_source = _geocode_and_cache(q, "postcode", conn)
                 geocode_query = q
             elif venue.address and len(venue.address.strip()) > 3:
-                parts = [p for p in [venue.address.strip(), venue.city, country_name] if p]
-                q = ", ".join(parts)
+                # FIX: avoid appending city/country if already present in the
+                # address string — Meetup often returns full addresses that
+                # already contain city and country, causing cache misses when
+                # they are naively appended again.
+                q = _build_address_query(venue.address, venue.city, country_name)
                 lat, lon, geocode_source = _geocode_and_cache(q, "address", conn)
                 geocode_query = q
             elif venue.city:

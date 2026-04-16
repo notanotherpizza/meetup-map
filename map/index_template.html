@@ -19,12 +19,36 @@ body { font-family: 'DM Sans', Arial, sans-serif; font-size: 13px; color: #111; 
 #logo-wrap { display: inline-block; margin-bottom: 18px; }
 #logo-wrap img { height: 300px; width: auto; display: block; }
 
-/* Search box */
-#search-row { display: flex; justify-content: center; align-items: stretch; max-width: 600px; margin: 0 auto 12px; border: 2px solid #111; }
-#search-input { flex: 1; height: 36px; border: none; padding: 0 12px; font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; background: #fff; color: #111; }
-#search-input::placeholder { color: #aaa; }
-#search-btn { height: 36px; padding: 0 18px; font-size: 12px; font-weight: 500; font-family: 'DM Sans', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; background: #111; color: #fff; border: none; cursor: pointer; white-space: nowrap; border-left: 2px solid #111; }
-#search-btn:hover { background: #333; }
+/* ── Search bar ── */
+#search-bar-wrap {
+  max-width: 680px; margin: 0 auto 6px;
+  display: flex; align-items: stretch;
+  border: 2px solid #111; background: #fff;
+}
+#search-bar-input {
+  flex: 1; border: none; outline: none; padding: 0 12px;
+  font-size: 14px; font-family: 'DM Sans', sans-serif; color: #111;
+  height: 40px; background: transparent; min-width: 0;
+}
+#search-bar-input::placeholder { color: #bbb; }
+.qb-search-btn {
+  height: 40px; padding: 0 18px; font-size: 11px; font-weight: 500;
+  font-family: 'DM Sans', sans-serif; letter-spacing: 0.05em; text-transform: uppercase;
+  background: #111; color: #fff; border: none; cursor: pointer; white-space: nowrap;
+  border-left: 2px solid #111; flex-shrink: 0;
+}
+.qb-search-btn:hover { background: #333; }
+
+/* Parse preview — plain text */
+#search-preview {
+  max-width: 680px; margin: 0 auto 6px;
+  font-size: 11px; color: #777; font-family: 'Courier Prime', monospace;
+  min-height: 16px; text-align: center;
+}
+.qb-hint {
+  font-size: 10px; color: #bbb; text-align: center; margin-bottom: 8px;
+  font-family: 'DM Sans', sans-serif;
+}
 
 /* Filter strip — just type + location + clear */
 #filter-strip { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -84,11 +108,7 @@ input.filter-input:focus { border-color: #111; }
 .check-row { display: flex; align-items: center; gap: 5px; padding: 2px 0; font-size: 12px; color: #444; cursor: pointer; }
 .check-row input { cursor: pointer; }
 
-/* Date inputs in sidebar */
-.date-row { display: flex; align-items: center; gap-4px; gap: 4px; margin-bottom: 4px; }
-.date-row label { font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 0.05em; width: 28px; flex-shrink: 0; }
-.date-row input { flex: 1; height: 22px; font-size: 11px; font-family: 'DM Sans', sans-serif; border: 1px solid #ccc; padding: 0 4px; color: #111; outline: none; min-width: 0; }
-.date-row input:focus { border-color: #111; }
+/* date-row CSS removed — replaced by date chip builder */
 
 /* ── Main ── */
 #main-content { flex: 1; padding: 0 20px; min-width: 0; }
@@ -137,12 +157,11 @@ input.filter-input:focus { border-color: #111; }
 @media (max-width: 640px) {
   #logo-wrap img { height: 80px; }
   #hero { padding: 12px 12px 10px; }
-  #search-row { margin-bottom: 8px; }
   #filter-strip { gap: 5px; margin-bottom: 8px; }
   .filter-label { display: none; }
   .filter-sep { display: none; }
-  #filter-location { width: 110px !important; }
-  #search-input { font-size: 13px; }
+  #loc-input { min-width: 60px !important; }
+  #tag-input { font-size: 13px; }
   #sidebar { display: none; }
 }
 #spinner {
@@ -176,10 +195,12 @@ input.filter-input:focus { border-color: #111; }
     <img src="hero.jpg" alt="Not Another Pizza logo">
   </div>
 
-  <div id="search-row">
-    <input type="text" id="search-input" placeholder="Search groups, events, cities, networks..." autocomplete="off" />
-    <button id="search-btn" onclick="runSearch()">Search</button>
+  <div id="search-bar-wrap">
+    <input id="search-bar-input" placeholder="kafka OR streaming AND (london OR berlin) AND NOT confluent" autocomplete="off" spellcheck="false" />
+    <button class="qb-search-btn" id="qb-search-btn">Search</button>
   </div>
+  <div id="search-preview"></div>
+  <div class="qb-hint">Use <strong>AND</strong> <strong>OR</strong> <strong>NOT</strong> and <strong>( )</strong> to build queries &nbsp;·&nbsp; dates auto-detected: <em>april</em>, <em>Q2 2025</em>, <em>this week</em></div>
 
   <div id="filter-strip">
     <span class="filter-label">Show</span>
@@ -188,9 +209,6 @@ input.filter-input:focus { border-color: #111; }
       <option value="groups">Groups only</option>
       <option value="events">Events only</option>
     </select>
-    <span class="filter-sep">|</span>
-    <span class="filter-label">Location</span>
-    <input type="text" id="filter-location" placeholder="City or country..." class="filter-input" style="width:140px" oninput="runSearch()" />
     <span class="filter-sep">|</span>
     <button class="view-btn" onclick="clearFilters()" style="font-size:11px;padding:3px 10px;border:1px solid #bbb;">Clear</button>
   </div>
@@ -258,18 +276,6 @@ input.filter-input:focus { border-color: #111; }
       <div class="sidebar-item" data-platform="luma" onclick="togglePlatform(this,'luma')">Luma <span class="platform-pill luma">Luma</span></div>
     </div>
 
-    <div class="sidebar-section" id="sec-date">
-      <div class="sidebar-title">Date range</div>
-      <div class="date-row">
-        <label>From</label>
-        <input type="date" id="filter-date-from" onchange="runSearch()" />
-      </div>
-      <div class="date-row">
-        <label>To</label>
-        <input type="date" id="filter-date-to" onchange="runSearch()" />
-      </div>
-    </div>
-
     <div class="sidebar-section" id="sec-online">
       <div class="sidebar-title">Format</div>
       <div class="sidebar-item active" data-online="all" onclick="toggleOnline(this,'all')">All</div>
@@ -306,9 +312,10 @@ input.filter-input:focus { border-color: #111; }
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script>
-const GROUPS   = __GROUPS__;
-const EVENTS   = __EVENTS__;
-const NETWORKS = __NETWORKS__;
+const GROUPS      = __GROUPS__;
+const EVENTS      = __EVENTS__;
+const NETWORKS    = __NETWORKS__;
+let CITY_COORDS = null; // loaded lazily from cities.json on first geo search
 
 // ── State ─────────────────────────────────────────────────────────────────
 let currentView   = 'list';
@@ -336,7 +343,7 @@ GROUPS.forEach(g => {
 
 // ── Sidebar visibility by type ────────────────────────────────────────────
 const GROUP_SECTIONS  = ['sec-status','sec-platform','sec-members','sec-events-count','sec-scraped'];
-const EVENT_SECTIONS  = ['sec-date','sec-online','sec-rsvp'];
+const EVENT_SECTIONS  = ['sec-online','sec-rsvp'];
 
 function updateSidebarVisibility() {
   const type = document.getElementById('filter-type').value;
@@ -419,14 +426,283 @@ function togglePlatform(el, val) {
   runSearch();
 }
 
-// ── Search ────────────────────────────────────────────────────────────────
-function terms() {
-  return document.getElementById('search-input').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+// ── Boolean query parser & evaluator ────────────────────────────────────
+// AST nodes:
+//   { type: 'AND'|'OR', children: [node, ...] }
+//   { type: 'NOT', child: node }
+//   { type: 'TERM', raw, isDate, dateRange }   isDate=true when raw parses as a date
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function score(item, ts) {
-  if (!ts.length) return 1;
-  let s = 0;
+// ── Tokeniser ─────────────────────────────────────────────────────────────
+function tokenise(input) {
+  const tokens = [];
+  let i = 0;
+  const s = input.trim();
+  while (i < s.length) {
+    // Skip whitespace
+    while (i < s.length && /\s/.test(s[i])) i++;
+    if (i >= s.length) break;
+
+    if (s[i] === '(') { tokens.push({ t: 'LPAREN' }); i++; continue; }
+    if (s[i] === ')') { tokens.push({ t: 'RPAREN' }); i++; continue; }
+
+    // Read a word
+    let j = i;
+    while (j < s.length && !/[\s()]/.test(s[j])) j++;
+    const word = s.slice(i, j);
+    i = j;
+
+    const up = word.toUpperCase();
+    if (up === 'AND') { tokens.push({ t: 'AND' }); continue; }
+    if (up === 'OR')  { tokens.push({ t: 'OR'  }); continue; }
+    if (up === 'NOT') { tokens.push({ t: 'NOT' }); continue; }
+    tokens.push({ t: 'TERM', v: word });
+  }
+  return tokens;
+}
+
+// ── Recursive descent parser ──────────────────────────────────────────────
+// Grammar (standard boolean precedence: NOT > AND > OR):
+//   expr   := or_expr
+//   or_expr  := and_expr (OR and_expr)*
+//   and_expr := not_expr (AND not_expr)*
+//   not_expr := NOT not_expr | atom
+//   atom     := TERM | LPAREN expr RPAREN
+//
+// Implicit AND: two adjacent terms/groups with no operator = AND
+
+function parseQuery(input) {
+  const tokens = tokenise(input);
+  let pos = 0;
+
+  function peek()    { return tokens[pos]; }
+  function consume() { return tokens[pos++]; }
+  function check(t)  { return peek() && peek().t === t; }
+
+  function parseOr() {
+    let left = parseAnd();
+    while (check('OR')) {
+      consume();
+      const right = parseAnd();
+      left = { type: 'OR', children: [left, right] };
+    }
+    return left;
+  }
+
+  function parseAnd() {
+    let left = parseNot();
+    // explicit AND only — adjacency is now phrase detection in parseAtom
+    while (check('AND')) {
+      consume();
+      const right = parseNot();
+      left = { type: 'AND', children: [left, right] };
+    }
+    return left;
+  }
+
+  function parseNot() {
+    if (check('NOT')) {
+      consume();
+      return { type: 'NOT', child: parseNot() };
+    }
+    return parseAtom();
+  }
+
+  function parseAtom() {
+    if (check('LPAREN')) {
+      consume();
+      const node = parseOr();
+      if (check('RPAREN')) consume();
+      return node;
+    }
+    if (check('TERM')) {
+      const tok = consume();
+      // Greedily collect adjacent TERMs (no operator between them) into a phrase.
+      // e.g. "san francisco" → single TERM raw="san francisco"
+      // Stop at: end of tokens, operator keywords, parens.
+      const words = [tok.v];
+      while (check('TERM')) {
+        words.push(consume().v);
+      }
+      const raw = words.join(' ');
+      const dateRange = parseDateChip(raw);
+      return { type: 'TERM', raw, isDate: !!dateRange, dateRange };
+    }
+    // Unexpected token — return null node
+    if (peek()) consume();
+    return null;
+  }
+
+  const ast = pos < tokens.length ? parseOr() : null;
+  return ast;
+}
+
+// ── AST evaluator ─────────────────────────────────────────────────────────
+function evalAst(node, item) {
+  if (!node) return true;
+  if (node.type === 'AND') return node.children.every(c => evalAst(c, item));
+  if (node.type === 'OR')  return node.children.some(c  => evalAst(c, item));
+  if (node.type === 'NOT') return !evalAst(node.child, item);
+  if (node.type === 'TERM') {
+    if (node.isDate) {
+      if (!item.starts_at) return false;
+      const d = item.starts_at.slice(0, 10);
+      return d >= node.dateRange.from && d <= node.dateRange.to;
+    }
+    return matchTerm(item, node.raw, false);
+  }
+  return true;
+}
+
+function scoreAst(node, item) {
+  if (!node) return 1;
+  if (node.type === 'AND') return node.children.reduce((s,c) => s + scoreAst(c,item), 0);
+  if (node.type === 'OR')  return node.children.reduce((s,c) => s + scoreAst(c,item), 0);
+  if (node.type === 'NOT') return 0;
+  if (node.type === 'TERM' && !node.isDate) return scoreOneTerm(item, node.raw);
+  return 0;
+}
+
+// ── Current parsed AST (updated on input) ────────────────────────────────
+let currentAst  = null;
+let currentQuery = '';
+
+function updateAst() {
+  currentQuery = document.getElementById('search-bar-input').value;
+  currentAst   = currentQuery.trim() ? parseQuery(currentQuery) : null;
+  renderPreview();
+  // Kick off cities.json load if there are any terms — once loaded, re-run search
+  if (currentAst && citiesLoadState === 'idle') {
+    ensureCitiesLoaded(() => {
+      if (currentAst) { renderPreview(); runSearch(); }
+    });
+  }
+}
+
+// ── Parse preview renderer (plain text) ──────────────────────────────────
+function renderPreview() {
+  const el = document.getElementById('search-preview');
+  if (!currentAst) { el.textContent = ''; return; }
+  el.textContent = astToText(currentAst);
+}
+
+function astToText(node, parentType) {
+  if (!node) return '';
+  if (node.type === 'TERM') {
+    if (node.isDate) return `[${node.dateRange.from} → ${node.dateRange.to}]`;
+    const geo = resolveCityTerm(node.raw);
+    if (geo) {
+      const { city, radiusKm } = parseCityRadius(node.raw);
+      const mi = Math.round((radiusKm || 40.0) / 1.60934);
+      return `${city} (±${mi}mi)`;
+    }
+    return node.raw;
+  }
+  if (node.type === 'NOT') return 'NOT ' + astToText(node.child, 'NOT');
+  if (node.type === 'AND' || node.type === 'OR') {
+    const parts = node.children.map(c => {
+      const s = astToText(c, node.type);
+      // Wrap sub-OR in parens when inside AND for readability
+      return (node.type === 'AND' && c.type === 'OR') ? `(${s})` : s;
+    });
+    return parts.join(` ${node.type} `);
+  }
+  return '';
+}
+
+// ── Haversine distance (km) ──────────────────────────────────────────────
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.asin(Math.sqrt(a));
+}
+
+// ── City lookup — normalise and check CITY_COORDS ─────────────────────────
+function normaliseCity(s) {
+  return s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// Parse "san francisco~50" → { city: "san francisco", radiusKm: 80.5 }
+// or "london" → { city: "london", radiusKm: null }
+function parseCityRadius(raw) {
+  const m = raw.match(/^(.+?)~(\d+(?:\.\d+)?)$/);
+  if (m) {
+    const miles = parseFloat(m[2]);
+    return { city: m[1].trim(), radiusKm: miles * 1.60934 };
+  }
+  return { city: raw, radiusKm: null };
+}
+
+// Lazy-load cities.json on first geo lookup
+let citiesLoadState = 'idle'; // 'idle' | 'loading' | 'ready' | 'failed'
+let citiesLoadCallbacks = [];
+
+function ensureCitiesLoaded(cb) {
+  if (citiesLoadState === 'ready')   { cb(); return; }
+  if (citiesLoadState === 'failed')  { cb(); return; } // silently fall back to text
+  citiesLoadCallbacks.push(cb);
+  if (citiesLoadState === 'loading') return;
+  citiesLoadState = 'loading';
+  fetch('cities.json')
+    .then(r => r.json())
+    .then(data => {
+      CITY_COORDS = data;
+      citiesLoadState = 'ready';
+      citiesLoadCallbacks.forEach(f => f());
+      citiesLoadCallbacks = [];
+    })
+    .catch(() => {
+      citiesLoadState = 'failed';
+      citiesLoadCallbacks.forEach(f => f());
+      citiesLoadCallbacks = [];
+    });
+}
+
+// Look up a term against CITY_COORDS — returns {lat,lon,radiusKm} or null
+function resolveCityTerm(raw) {
+  if (!CITY_COORDS) return null; // not loaded yet — fall back to text
+  const { city, radiusKm } = parseCityRadius(raw);
+  const key = normaliseCity(city);
+  const entry = CITY_COORDS[key];
+  if (!entry) return null;
+  return { lat: entry.lat, lon: entry.lon, display: city,
+           radiusKm: radiusKm !== null ? radiusKm : 40.0 }; // default 25mi = 40km
+}
+
+// ── matchTerm / scoreOneTerm ──────────────────────────────────────────────
+// Single words: \b word boundary match.
+// Multi-word phrases: every word must appear somewhere across all fields
+// (fuzzy — "san francisco" matches "San Francisco Bay Area Kafka" or
+//  a group whose city is "Palo Alto" but name contains both words).
+function termRegex(t) {
+  const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('\\b' + escaped, 'i');
+}
+
+function matchTerm(item, t, _locOnly) {
+  // Geo match broadens silently — OR with text match
+  const geo = resolveCityTerm(t);
+  if (geo && item.lat && item.lon) {
+    if (haversineKm(geo.lat, geo.lon, item.lat, item.lon) <= geo.radiusKm) return true;
+  }
+  // Text match
+  const allFields = [item.name || item.title || '', item.city || '',
+                     item.country || '', item.network || item.pro_network || '',
+                     item.group_name || ''].join(' ');
+  if (t.includes(' ')) {
+    return t.split(/\s+/).every(word =>
+      new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(allFields)
+    );
+  }
+  return termRegex(t).test(allFields);
+}
+
+function scoreOneTerm(item, t) {
   const fields = [
     [(item.name || item.title || '').toLowerCase(), 4],
     [(item.city || '').toLowerCase(), 2],
@@ -434,30 +710,158 @@ function score(item, ts) {
     [(item.network || item.pro_network || '').toLowerCase(), 1],
     [(item.group_name || '').toLowerCase(), 2],
   ];
-  for (const t of ts) for (const [f, w] of fields) if (f.includes(t)) s += w;
+  if (t.includes(' ')) {
+    // Score = sum of individual word scores
+    return t.split(/\s+/).reduce((total, word) => {
+      const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      return total + fields.reduce((s, [f, w]) => s + (re.test(f) ? w : 0), 0);
+    }, 0);
+  }
+  const re = termRegex(t);
+  let s = 0;
+  for (const [f, w] of fields) if (re.test(f)) s += w;
   return s;
 }
 
-function locationMatch(item) {
-  const loc = document.getElementById('filter-location').value.trim().toLowerCase();
-  if (!loc) return true;
-  return (item.city || '').toLowerCase().includes(loc) ||
-         (item.country || '').toLowerCase().includes(loc);
+// ── Date chip state & parser ──────────────────────────────────────────────
+
+const MONTHS = ['january','february','march','april','may','june',
+                'july','august','september','october','november','december'];
+const MONTH_SHORT = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+
+function parseDateChip(raw) {
+  const s = raw.trim().toLowerCase().replace(/\s+/g, ' ');
+  const now = new Date();
+  const y = now.getFullYear();
+
+  // "this week"
+  if (s === 'this week') {
+    const mon = new Date(now); mon.setDate(now.getDate() - ((now.getDay()+6)%7));
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    return { label: 'This week', from: ymd(mon), to: ymd(sun) };
+  }
+  // "next week"
+  if (s === 'next week') {
+    const mon = new Date(now); mon.setDate(now.getDate() - ((now.getDay()+6)%7) + 7);
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    return { label: 'Next week', from: ymd(mon), to: ymd(sun) };
+  }
+  // "this month"
+  if (s === 'this month') {
+    const from = `${y}-${pad(now.getMonth()+1)}-01`;
+    const to   = `${y}-${pad(now.getMonth()+1)}-${pad(daysInMonth(y, now.getMonth()))}`;
+    return { label: 'This month', from, to };
+  }
+  // "next month"
+  if (s === 'next month') {
+    const nm = now.getMonth() === 11 ? 0 : now.getMonth()+1;
+    const ny = now.getMonth() === 11 ? y+1 : y;
+    const from = `${ny}-${pad(nm+1)}-01`;
+    const to   = `${ny}-${pad(nm+1)}-${pad(daysInMonth(ny, nm))}`;
+    return { label: 'Next month', from, to };
+  }
+  // "today"
+  if (s === 'today') { const d = ymd(now); return { label: 'Today', from: d, to: d }; }
+
+  // Quarter: "Q2" or "Q2 2025" or "2025 Q2"
+  let m;
+  m = s.match(/^q([1-4])(?:\s+(\d{4}))?$/) || s.match(/^(\d{4})\s+q([1-4])$/);
+  if (m) {
+    const q   = parseInt(m[1] || m[2]);
+    const yr  = parseInt(m[2] || m[1]) || y;
+    const qm  = (q-1)*3;
+    const from = `${yr}-${pad(qm+1)}-01`;
+    const to   = `${yr}-${pad(qm+3)}-${pad(daysInMonth(yr, qm+2))}`;
+    return { label: `Q${q} ${yr}`, from, to };
+  }
+
+  // Year only: "2025"
+  if (/^\d{4}$/.test(s)) {
+    const yr = parseInt(s);
+    return { label: String(yr), from: `${yr}-01-01`, to: `${yr}-12-31` };
+  }
+
+  // Month name only: "april" / "apr"
+  const mi = MONTHS.indexOf(s);
+  const mis = MONTH_SHORT.indexOf(s.slice(0,3));
+  const mIdx = mi >= 0 ? mi : mis >= 0 ? mis : -1;
+  if (mIdx >= 0) {
+    // Infer year — if month is in the past this year, try next year
+    let yr = y;
+    const lastDay = daysInMonth(yr, mIdx);
+    const to = `${yr}-${pad(mIdx+1)}-${pad(lastDay)}`;
+    return { label: MONTHS[mIdx].charAt(0).toUpperCase()+MONTHS[mIdx].slice(1), from: `${yr}-${pad(mIdx+1)}-01`, to };
+  }
+
+  // "Month YYYY" or "YYYY Month" or "Mon YYYY" etc.
+  const monthYearRe = /^([a-z]+)\s+(\d{4})$|^(\d{4})\s+([a-z]+)$/;
+  const mym = s.match(monthYearRe);
+  if (mym) {
+    const mstr = (mym[1] || mym[4]).slice(0,3);
+    const yr   = parseInt(mym[2] || mym[3]);
+    const mI   = MONTH_SHORT.indexOf(mstr);
+    if (mI >= 0 && !isNaN(yr)) {
+      const lastDay = daysInMonth(yr, mI);
+      return { label: `${MONTHS[mI].charAt(0).toUpperCase()+MONTHS[mI].slice(1)} ${yr}`,
+               from: `${yr}-${pad(mI+1)}-01`, to: `${yr}-${pad(mI+1)}-${pad(lastDay)}` };
+    }
+  }
+
+  // Date range: "YYYY-MM-DD - YYYY-MM-DD" or "Mon YYYY - Mon YYYY" or "Mon - Mon YYYY"
+  const rangeSep = s.match(/^(.+?)\s*[-–]\s*(.+)$/);
+  if (rangeSep) {
+    const a = parseDateChip(rangeSep[1]);
+    const b = parseDateChip(rangeSep[2]);
+    if (a && b) return { label: `${a.label} – ${b.label}`, from: a.from, to: b.to };
+    if (a && !b) {
+      // "Mon - Mon YYYY" — try appending year from second part
+      const yr = rangeSep[2].match(/\d{4}/)?.[0];
+      if (yr) {
+        const a2 = parseDateChip(rangeSep[1] + ' ' + yr);
+        const b2 = parseDateChip(rangeSep[2]);
+        if (a2 && b2) return { label: `${a2.label} – ${b2.label}`, from: a2.from, to: b2.to };
+      }
+    }
+  }
+
+  // ISO date: YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return { label: s, from: s, to: s };
+
+  // DD Mon YYYY or Mon DD YYYY
+  const fullDateRe = /^(\d{1,2})\s+([a-z]+)\s+(\d{4})$|^([a-z]+)\s+(\d{1,2})\s+(\d{4})$/;
+  const fdm = s.match(fullDateRe);
+  if (fdm) {
+    const day  = parseInt(fdm[1] || fdm[5]);
+    const mon  = (fdm[2] || fdm[4]).slice(0,3);
+    const yr   = parseInt(fdm[3] || fdm[6]);
+    const mI   = MONTH_SHORT.indexOf(mon);
+    if (mI >= 0) { const d = `${yr}-${pad(mI+1)}-${pad(day)}`; return { label: d, from: d, to: d }; }
+  }
+
+  return null; // unparseable
 }
 
-function dateMatch(item) {
-  const from = document.getElementById('filter-date-from').value;
-  const to   = document.getElementById('filter-date-to').value;
-  if (!from && !to) return true;
-  if (!item.starts_at) return !from;
-  const d = new Date(item.starts_at);
-  if (from && d < new Date(from)) return false;
-  if (to   && d > new Date(to + 'T23:59:59')) return false;
-  return true;
+function pad(n) { return String(n).padStart(2,'0'); }
+function ymd(d) { return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+function daysInMonth(yr, mIdx) { return new Date(yr, mIdx+1, 0).getDate(); }
+
+function addDateTerm(raw) {
+  const parsed = parseDateChip(raw);
+  if (!parsed) return;
+  const grp = qb.date[qb.date.length - 1];
+  if (grp.terms.some(t => t.label === parsed.label)) return;
+  grp.terms.push({ ...parsed, not: false });
+  renderDate();
+  runSearch();
 }
+
+// dateMatch is now evalDateChannel — defined in query builder state section
+function itemMatchesTags(item)  { return currentAst ? evalAst(currentAst, item) : true; }
+function locationMatch(_item)   { return true; }  // handled inside evalAst
+function dateMatch(_item)       { return true; }  // handled inside evalAst
+function itemScoreFromTags(item){ return currentAst ? (scoreAst(currentAst, item) || 1) : 1; }
 
 function getResults() {
-  const ts   = terms();
   const type = document.getElementById('filter-type').value;
   const scrapedOnly = document.getElementById('chk-scraped').checked;
   let items  = [];
@@ -471,10 +875,9 @@ function getResults() {
       if ((g.members || 0) < minMembers) return false;
       if ((g.total_events || 0) < minEvcount) return false;
       if (scrapedOnly && g.event_status === 'unscraped') return false;
-      if (!locationMatch(g)) return false;
-      if (ts.length && score(g, ts) === 0) return false;
+      if (!itemMatchesTags(g)) return false;
       return true;
-    }).map(g => ({ ...g, _type: 'group', _score: score(g, ts) }));
+    }).map(g => ({ ...g, _type: 'group', _score: itemScoreFromTags(g) }));
     items.push(...gs);
   }
 
@@ -485,11 +888,9 @@ function getResults() {
       if (activeOnline === 'online'   && !e.is_online) return false;
       if (activeOnline === 'inperson' &&  e.is_online) return false;
       if ((e.rsvp_count || 0) < minRsvp) return false;
-      if (!locationMatch(e)) return false;
-      if (!dateMatch(e)) return false;
-      if (ts.length && score(e, ts) === 0) return false;
+      if (!itemMatchesTags(e)) return false;
       return true;
-    }).map(e => ({ ...e, _type: 'event', _score: score(e, ts) }));
+    }).map(e => ({ ...e, _type: 'event', _score: itemScoreFromTags(e) }));
     items.push(...es);
   }
 
@@ -499,20 +900,31 @@ function getResults() {
 }
 
 // ── Highlight ─────────────────────────────────────────────────────────────
-function hl(text, ts) {
-  if (!ts.length || !text) return text || '';
+function collectTerms(node, acc) {
+  if (!node) return;
+  if (node.type === 'TERM' && !node.isDate) acc.push(node.raw);
+  else if (node.type === 'NOT') return; // don't highlight NOT terms
+  else if (node.children) node.children.forEach(c => collectTerms(c, acc));
+  else if (node.child)    collectTerms(node.child, acc);
+}
+function hl(text) {
+  if (!text || !currentAst) return text || '';
+  const terms = [];
+  collectTerms(currentAst, terms);
   let out = text;
-  ts.forEach(t => {
-    out = out.replace(new RegExp(`(${t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'),
-      '<span class="hl">$1</span>');
+  terms.forEach(t => {
+    const words = t.includes(' ') ? t.split(/\s+/) : [t];
+    words.forEach(word => {
+      out = out.replace(termRegex(word), '<span class="hl">$&</span>');
+    });
   });
   return out;
 }
 
 // ── Render items ──────────────────────────────────────────────────────────
-function renderGroup(g, ts) {
-  const name    = hl(g.name, ts);
-  const city    = hl(g.city || '', ts);
+function renderGroup(g) {
+  const name    = hl(g.name);
+  const city    = hl(g.city || '');
   const net     = g.network || '';
   const members = (g.members || 0).toLocaleString();
   const total   = (g.total_events || 0).toLocaleString();
@@ -530,9 +942,9 @@ function renderGroup(g, ts) {
   </div>`;
 }
 
-function renderEvent(e, ts) {
-  const title     = hl(e.title, ts);
-  const groupName = hl(e.group_name || e.group_id || '', ts);
+function renderEvent(e) {
+  const title     = hl(e.title);
+  const groupName = hl(e.group_name || e.group_id || '');
   const date      = e.starts_at ? new Date(e.starts_at).toLocaleDateString('en-GB',
     { day:'numeric', month:'short', year:'numeric' }) : '';
   const upTag     = e.status === 'upcoming' ? '<span class="tag upcoming">Upcoming</span>' : '';
@@ -553,10 +965,9 @@ function renderEvent(e, ts) {
 }
 
 function renderPage(items, page) {
-  const ts    = terms();
   const slice = items.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
   if (!slice.length) return '';
-  return slice.map(i => i._type === 'event' ? renderEvent(i,ts) : renderGroup(i,ts)).join('');
+  return slice.map(i => i._type === 'event' ? renderEvent(i) : renderGroup(i)).join('');
 }
 
 function renderPagination(total, page) {
@@ -658,17 +1069,20 @@ function runSearch() {
   setTimeout(() => {
     const items = getResults();
     const total = items.length;
-    const q     = document.getElementById('search-input').value.trim();
     spinner.style.display = 'none';
 
     if (total === 0) {
       document.getElementById('stats-text').innerHTML = 'No results';
       noRes.style.display = 'block';
-      noRes.innerHTML = q ? `No results for <strong>"${q}"</strong>.` : 'No results match the current filters.';
+      noRes.innerHTML = currentQuery.trim()
+        ? `No results for <strong>"${escHtml(currentQuery.trim())}"</strong>.`
+        : 'No results match the current filters.';
     } else {
-      const label = q ? ` for <strong>"${q}"</strong>` : '';
+      const tagLabel = currentQuery.trim()
+        ? ` for <strong>"${escHtml(currentQuery.trim())}"</strong>`
+        : '';
       document.getElementById('stats-text').innerHTML =
-        `<strong>${total.toLocaleString()}</strong> result${total===1?'':'s'}${label}`;
+        `<strong>${total.toLocaleString()}</strong> result${total===1?'':'s'}${tagLabel}`;
       noRes.style.display = 'none';
       if (currentView === 'list') {
         listEl.innerHTML = renderPage(items, 1);
@@ -681,10 +1095,9 @@ function runSearch() {
 }
 
 function clearFilters() {
-  document.getElementById('search-input').value = '';
-  document.getElementById('filter-location').value = '';
-  document.getElementById('filter-date-from').value = '';
-  document.getElementById('filter-date-to').value = '';
+  document.getElementById('search-bar-input').value = '';
+  currentAst = null; currentQuery = '';
+  renderPreview();
   document.getElementById('filter-type').value = 'all';
   document.getElementById('network-search').value = '';
   document.getElementById('chk-scraped').checked = false;
@@ -708,6 +1121,7 @@ function clearFilters() {
   document.querySelector('#rsvp-bands .band-btn[data-min="0"]').classList.add('active');
   updateSidebarVisibility();
   renderNetworkList();
+  history.replaceState(null, '', window.location.pathname);
   runSearch();
 }
 
@@ -727,44 +1141,167 @@ function setView(v) {
   }
 }
 
-const searchInput = document.getElementById('search-input'); if (searchInput) searchInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') runSearch();
+// ── Date typeahead ───────────────────────────────────────────────────────
+function generateDateSuggestions(raw) {
+  const s = raw.trim().toLowerCase();
+  if (!s) return [];
+  const now = new Date();
+  const y = now.getFullYear();
+  const suggs = [];
+
+  // Helper to add if parseable and not already a tag
+  function add(label, inputStr) {
+    const parsed = parseDateChip(inputStr || label);
+    if (!parsed) return;
+    if (qb.date.some(g => g.terms.some(t => t.label === parsed.label))) return;
+    suggs.push({ label: parsed.label, range: `${parsed.from} – ${parsed.to}`, parsed });
+  }
+
+  // Relative
+  ['today','this week','next week','this month','next month'].forEach(k => {
+    if (k.startsWith(s)) add(k.charAt(0).toUpperCase()+k.slice(1), k);
+  });
+
+  // Quarter: "q" or "q1" "q2" etc
+  if (/^q\d?$/.test(s)) {
+    for (let q = 1; q <= 4; q++) {
+      if (`q${q}`.startsWith(s)) {
+        add(`Q${q} ${y}`, `Q${q} ${y}`);
+        add(`Q${q} ${y+1}`, `Q${q} ${y+1}`);
+      }
+    }
+  }
+  // "q2 2025" style
+  if (/^q[1-4]\s+\d{0,4}$/.test(s)) {
+    const parsed = parseDateChip(s);
+    if (parsed) add(parsed.label, s);
+  }
+
+  // Year: "20" "202" "2025"
+  if (/^\d{1,4}$/.test(s)) {
+    [y-1, y, y+1].forEach(yr => {
+      if (String(yr).startsWith(s)) add(String(yr), String(yr));
+    });
+  }
+
+  // Month name prefix: "ap" → April, "ju" → June/July
+  MONTHS.forEach((mon, i) => {
+    const short = MONTH_SHORT[i];
+    if (mon.startsWith(s) || short.startsWith(s)) {
+      const cap = mon.charAt(0).toUpperCase()+mon.slice(1);
+      // Current + next year for that month
+      [y, y+1].forEach(yr => add(`${cap} ${yr}`, `${cap} ${yr}`));
+    }
+  });
+
+  // "April 20" / "apr 20" → month+year combos
+  const monthYearPartial = s.match(/^([a-z]+)\s+(\d{1,4})$/);
+  if (monthYearPartial) {
+    const mstr = monthYearPartial[1].slice(0,3);
+    const yrPart = monthYearPartial[2];
+    const mI = MONTH_SHORT.indexOf(mstr);
+    if (mI >= 0) {
+      [y-1, y, y+1].forEach(yr => {
+        if (String(yr).startsWith(yrPart)) {
+          const cap = MONTHS[mI].charAt(0).toUpperCase()+MONTHS[mI].slice(1);
+          add(`${cap} ${yr}`, `${cap} ${yr}`);
+        }
+      });
+    }
+  }
+
+  // ISO partial "2025-0" → suggest months
+  if (/^\d{4}-\d{0,2}$/.test(s)) {
+    const yr = parseInt(s.split('-')[0]);
+    const mPart = s.split('-')[1] || '';
+    for (let m2 = 1; m2 <= 12; m2++) {
+      if (pad(m2).startsWith(mPart)) {
+        const cap = MONTHS[m2-1].charAt(0).toUpperCase()+MONTHS[m2-1].slice(1);
+        add(`${cap} ${yr}`, `${cap} ${yr}`);
+      }
+    }
+  }
+
+  return suggs.slice(0, 8);
+}
+
+let dateDropFocusIdx = -1;
+
+function showDateSuggestions(suggs) {
+  const drop = document.getElementById('date-suggestions');
+  if (!suggs.length) { drop.classList.add('hidden'); return; }
+  dateDropFocusIdx = -1;
+  drop.innerHTML = suggs.map((s, i) =>
+    `<div class="date-sugg-item" data-i="${i}" onmousedown="pickDateSugg(${i})">
+      <span>${escHtml(s.label)}</span>
+      <span class="date-sugg-range">${s.range}</span>
+    </div>`
+  ).join('');
+  drop.classList.remove('hidden');
+}
+
+function hideDateSuggestions() {
+  document.getElementById('date-suggestions').classList.add('hidden');
+  dateDropFocusIdx = -1;
+}
+
+function pickDateSugg(i) {
+  const input = document.getElementById('qb-date-input');
+  const suggs = generateDateSuggestions(input.value);
+  if (!suggs[i]) return;
+  input.value = '';
+  hideDateSuggestions();
+  addDateTerm(suggs[i].parsed.label);
+}
+
+
+// ── Search bar wiring ────────────────────────────────────────────────────
+const searchBarInput = document.getElementById('search-bar-input');
+searchBarInput.addEventListener('input', () => { updateAst(); });
+searchBarInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); syncUrl(); runSearch(); }
 });
+document.getElementById('qb-search-btn').addEventListener('click', () => { syncUrl(); runSearch(); });
 
 // Init
 updateSidebarVisibility();
 renderNetworkList();
 runSearch();
 
-// ── URL param handling ────────────────────────────────────────────────────
-(function() {
+// ── URL sync ─────────────────────────────────────────────────────────────
+function syncUrl() {
   const params = new URLSearchParams(window.location.search);
-  const q = params.get('q');
-  const loc = params.get('loc');
-  const network = params.get('network');
+  const q = currentQuery.trim();
+  if (q) params.set('q', q); else params.delete('q');
+  const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+  history.replaceState(null, '', newUrl);
+}
+
+// ── Bootstrap from URL on load ────────────────────────────────────────────
+(function() {
+  const params   = new URLSearchParams(window.location.search);
+  const q        = params.get('q');
+  const network  = params.get('network');
   const platform = params.get('platform');
+  let changed    = false;
 
   if (q) {
-    document.getElementById('search-input').value = q;
-  }
-  if (loc) {
-    document.getElementById('filter-location').value = loc;
+    document.getElementById('search-bar-input').value = q;
+    updateAst();
+    changed = true;
   }
   if (network) {
     const match = NETWORKS.find(n => n.name.toLowerCase() === network.toLowerCase());
-    if (match) {
-      activeNetwork = match.name;
-      renderNetworkList();
-    }
+    if (match) { activeNetwork = match.name; renderNetworkList(); changed = true; }
   }
   if (platform && ['meetup','luma'].includes(platform)) {
     activePlatform = platform;
     document.querySelectorAll('[data-platform]').forEach(i => i.classList.remove('active'));
     const el = document.querySelector(`[data-platform="${platform}"]`);
     if (el) el.classList.add('active');
+    changed = true;
   }
-
-  if (q || loc || network || platform) runSearch();
+  if (changed) runSearch();
 })();
 </script>
 </body>

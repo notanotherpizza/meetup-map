@@ -4,6 +4,8 @@ services:
   worker:
     build: .
     command: python -m worker.scraper
+    deploy:
+      replicas: 20
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
       - KAFKA_SSL_CA=${KAFKA_SSL_CA}
@@ -20,6 +22,8 @@ services:
   sink:
     build: .
     command: python -m sink.consumer
+    deploy:
+      replicas: 20
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
       - KAFKA_SSL_CA=${KAFKA_SSL_CA}

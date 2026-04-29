@@ -2,10 +2,9 @@ version: "3.8"
 
 services:
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
+    build: .
     environment:
+      - APP_MODE=worker
       - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
       - KAFKA_SSL_CA=${KAFKA_SSL_CA}
       - KAFKA_SSL_CERT=${KAFKA_SSL_CERT}
@@ -19,10 +18,9 @@ services:
       - PLAYWRIGHT_FALLBACK=true
 
   sink:
-    build:
-      context: .
-      dockerfile: Dockerfile.sink
+    build: .
     environment:
+      - APP_MODE=sink
       - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
       - KAFKA_SSL_CA=${KAFKA_SSL_CA}
       - KAFKA_SSL_CERT=${KAFKA_SSL_CERT}

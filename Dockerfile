@@ -8,3 +8,6 @@ COPY worker/ worker/
 COPY seed/ seed/
 COPY map/ map/
 RUN pip install .
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+ENTRYPOINT ["./entrypoint.sh"]

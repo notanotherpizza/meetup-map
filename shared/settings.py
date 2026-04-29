@@ -59,8 +59,9 @@ class Settings(BaseSettings):
         if os.path.exists(filepath):
             return filepath
         if inline:
+            content = inline.replace("\\n", "\n")
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pem", mode="w")
-            tmp.write(inline)
+            tmp.write(content)
             tmp.close()
             return tmp.name
         raise ValueError(f"No cert available: {filepath} not found and no inline value set")

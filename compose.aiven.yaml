@@ -4,29 +4,29 @@ x-worker-common: &worker-common
   build: .
   command: python -m worker.scraper
   environment: &worker-env
-    - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
+    - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
     - KAFKA_SSL_CA=${KAFKA_SSL_CA}
     - KAFKA_SSL_CERT=${KAFKA_SSL_CERT}
     - KAFKA_SSL_KEY=${KAFKA_SSL_KEY}
-    - TOPIC_GROUPS_TO_SCRAPE=${TOPIC_GROUPS_TO_SCRAPE:-groups-to-scrape}
-    - TOPIC_GROUPS_RAW=${TOPIC_GROUPS_RAW:-groups-raw}
-    - TOPIC_EVENTS_RAW=${TOPIC_EVENTS_RAW:-events-raw}
-    - PRO_NETWORKS=${PRO_NETWORKS:-pydata}
-    - MAX_EVENTS_PER_GROUP=${MAX_EVENTS_PER_GROUP:-50}
-    - REQUEST_DELAY_SECONDS=${REQUEST_DELAY_SECONDS:-1.5}
-    - PLAYWRIGHT_FALLBACK=${PLAYWRIGHT_FALLBACK:-true}
+    - TOPIC_GROUPS_TO_SCRAPE=groups-to-scrape
+    - TOPIC_GROUPS_RAW=groups-raw
+    - TOPIC_EVENTS_RAW=events-raw
+    - PRO_NETWORKS=pydata
+    - MAX_EVENTS_PER_GROUP=50
+    - REQUEST_DELAY_SECONDS=1.5
+    - PLAYWRIGHT_FALLBACK=true
 
 x-sink-common: &sink-common
   build: .
   command: python -m sink.consumer
   environment: &sink-env
-    - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
+    - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
     - KAFKA_SSL_CA=${KAFKA_SSL_CA}
     - KAFKA_SSL_CERT=${KAFKA_SSL_CERT}
     - KAFKA_SSL_KEY=${KAFKA_SSL_KEY}
-    - POSTGRES_URI=${POSTGRES_URI}
-    - TOPIC_GROUPS_RAW=${TOPIC_GROUPS_RAW:-groups-raw}
-    - TOPIC_EVENTS_RAW=${TOPIC_EVENTS_RAW:-events-raw}
+    - POSTGRES_URI=postgres://avnadmin:REDACTED_PASSWORD@public-meetupmap-pg-hugh-project.j.aivencloud.com:21104/defaultdb?sslmode=require
+    - TOPIC_GROUPS_RAW=groups-raw
+    - TOPIC_EVENTS_RAW=events-raw
 
 services:
   worker-01: *worker-common

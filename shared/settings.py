@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     kafka_ssl_key: str = ""
 
     # Postgres
-    postgres_uri: str
+    postgres_uri: str = ""
 
     # Topics
     topic_groups_to_scrape: str = "groups-to-scrape"

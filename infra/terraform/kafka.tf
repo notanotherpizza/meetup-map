@@ -1,7 +1,9 @@
 resource "aiven_kafka" "meetupmap" {
-  project      = var.aiven_project
-  plan         = "free-0"
-  service_name = "meetupmap-kafka"
+  project                 = var.aiven_project
+  cloud_name              = var.cloud_name
+  plan                    = "startup-4"
+  service_name            = "meetupmap-kafka"
+  project_vpc_id          = aiven_project_vpc.meetupmap.id
 
   kafka_user_config {
     kafka_rest = true

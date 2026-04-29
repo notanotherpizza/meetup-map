@@ -11,7 +11,13 @@ variable "aiven_project" {
 }
 
 variable "cloud_name" {
-  description = "Aiven cloud region"
+  description = "Aiven cloud region (must be Aiven Apps compatible)"
   type        = string
-  default     = "aws-eu-west-2"
+  default     = "aws-eu-west-1"
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for the VPC"
+  type        = string
+  default     = "192.168.0.0/24"
 }

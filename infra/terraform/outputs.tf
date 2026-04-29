@@ -17,3 +17,13 @@ output "postgres_uri" {
   value       = aiven_pg.meetupmap.service_uri
   sensitive   = true
 }
+
+output "vpc_id" {
+  description = "VPC ID for Aiven Apps deployment"
+  value       = aiven_project_vpc.meetupmap.id
+}
+
+output "vpc_state" {
+  description = "VPC state"
+  value       = aiven_project_vpc.meetupmap.state
+}

@@ -3,4 +3,4 @@
 
 aiven_api_token = "your-aiven-api-token-here"
 aiven_project   = "hugh-one"
-cloud_name      = "aws-eu-west-2"
+cloud_name      = "aws-eu-west-1"  # Aiven Apps supported region

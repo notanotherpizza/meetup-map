@@ -1,72 +1,30 @@
 version: "3.8"
 
-x-worker-common: &worker-common
-  build: .
-  command: python -m worker.scraper
-  environment: &worker-env
-    - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
-    - KAFKA_SSL_CA=${KAFKA_SSL_CA}
-    - KAFKA_SSL_CERT=${KAFKA_SSL_CERT}
-    - KAFKA_SSL_KEY=${KAFKA_SSL_KEY}
-    - TOPIC_GROUPS_TO_SCRAPE=groups-to-scrape
-    - TOPIC_GROUPS_RAW=groups-raw
-    - TOPIC_EVENTS_RAW=events-raw
-    - PRO_NETWORKS=pydata
-    - MAX_EVENTS_PER_GROUP=50
-    - REQUEST_DELAY_SECONDS=1.5
-    - PLAYWRIGHT_FALLBACK=true
-
-x-sink-common: &sink-common
-  build: .
-  command: python -m sink.consumer
-  environment: &sink-env
-    - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
-    - KAFKA_SSL_CA=${KAFKA_SSL_CA}
-    - KAFKA_SSL_CERT=${KAFKA_SSL_CERT}
-    - KAFKA_SSL_KEY=${KAFKA_SSL_KEY}
-    - POSTGRES_URI=postgres://avnadmin:REDACTED_PASSWORD@public-meetupmap-pg-hugh-project.j.aivencloud.com:21104/defaultdb?sslmode=require
-    - TOPIC_GROUPS_RAW=groups-raw
-    - TOPIC_EVENTS_RAW=events-raw
-
 services:
-  worker-01: *worker-common
-  worker-02: *worker-common
-  worker-03: *worker-common
-  worker-04: *worker-common
-  worker-05: *worker-common
-  worker-06: *worker-common
-  worker-07: *worker-common
-  worker-08: *worker-common
-  worker-09: *worker-common
-  worker-10: *worker-common
-  worker-11: *worker-common
-  worker-12: *worker-common
-  worker-13: *worker-common
-  worker-14: *worker-common
-  worker-15: *worker-common
-  worker-16: *worker-common
-  worker-17: *worker-common
-  worker-18: *worker-common
-  worker-19: *worker-common
-  worker-20: *worker-common
+  worker:
+    build: .
+    command: python -m worker.scraper
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
+      - KAFKA_SSL_CA=${KAFKA_SSL_CA}
+      - KAFKA_SSL_CERT=${KAFKA_SSL_CERT}
+      - KAFKA_SSL_KEY=${KAFKA_SSL_KEY}
+      - TOPIC_GROUPS_TO_SCRAPE=groups-to-scrape
+      - TOPIC_GROUPS_RAW=groups-raw
+      - TOPIC_EVENTS_RAW=events-raw
+      - PRO_NETWORKS=pydata
+      - MAX_EVENTS_PER_GROUP=50
+      - REQUEST_DELAY_SECONDS=1.5
+      - PLAYWRIGHT_FALLBACK=true
 
-  sink-01: *sink-common
-  sink-02: *sink-common
-  sink-03: *sink-common
-  sink-04: *sink-common
-  sink-05: *sink-common
-  sink-06: *sink-common
-  sink-07: *sink-common
-  sink-08: *sink-common
-  sink-09: *sink-common
-  sink-10: *sink-common
-  sink-11: *sink-common
-  sink-12: *sink-common
-  sink-13: *sink-common
-  sink-14: *sink-common
-  sink-15: *sink-common
-  sink-16: *sink-common
-  sink-17: *sink-common
-  sink-18: *sink-common
-  sink-19: *sink-common
-  sink-20: *sink-common
+  sink:
+    build: .
+    command: python -m sink.consumer
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
+      - KAFKA_SSL_CA=${KAFKA_SSL_CA}
+      - KAFKA_SSL_CERT=${KAFKA_SSL_CERT}
+      - KAFKA_SSL_KEY=${KAFKA_SSL_KEY}
+      - POSTGRES_URI=postgres://avnadmin:REDACTED_PASSWORD@public-meetupmap-pg-hugh-project.j.aivencloud.com:21104/defaultdb?sslmode=require
+      - TOPIC_GROUPS_RAW=groups-raw
+      - TOPIC_EVENTS_RAW=events-raw

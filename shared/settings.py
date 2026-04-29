@@ -60,6 +60,10 @@ class Settings(BaseSettings):
             return filepath
         if inline:
             content = inline.replace("\\n", "\n")
+            content = content.replace("-----BEGINCERTIFICATE-----", "-----BEGIN CERTIFICATE-----")
+            content = content.replace("-----ENDCERTIFICATE-----", "-----END CERTIFICATE-----")
+            content = content.replace("-----BEGINPRIVATEKEY-----", "-----BEGIN PRIVATE KEY-----")
+            content = content.replace("-----ENDPRIVATEKEY-----", "-----END PRIVATE KEY-----")
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pem", mode="w")
             tmp.write(content)
             tmp.close()

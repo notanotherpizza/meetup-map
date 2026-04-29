@@ -2,8 +2,9 @@ version: "3.8"
 
 services:
   worker:
-    build: .
-    command: python -m worker.scraper
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
       - KAFKA_SSL_CA=${KAFKA_SSL_CA}
@@ -18,8 +19,9 @@ services:
       - PLAYWRIGHT_FALLBACK=true
 
   sink:
-    build: .
-    command: python -m sink.consumer
+    build:
+      context: .
+      dockerfile: Dockerfile.sink
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=public-meetupmap-kafka-hugh-project.j.aivencloud.com:21116
       - KAFKA_SSL_CA=${KAFKA_SSL_CA}

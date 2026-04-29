@@ -16,9 +16,6 @@ services:
       - MAX_EVENTS_PER_GROUP=${MAX_EVENTS_PER_GROUP:-50}
       - REQUEST_DELAY_SECONDS=${REQUEST_DELAY_SECONDS:-1.5}
       - PLAYWRIGHT_FALLBACK=${PLAYWRIGHT_FALLBACK:-true}
-    depends_on:
-      - kafka
-      - postgres
 
   sink:
     build: .
@@ -31,12 +28,3 @@ services:
       - POSTGRES_URI=${POSTGRES_URI}
       - TOPIC_GROUPS_RAW=${TOPIC_GROUPS_RAW:-groups-raw}
       - TOPIC_EVENTS_RAW=${TOPIC_EVENTS_RAW:-events-raw}
-    depends_on:
-      - kafka
-      - postgres
-
-  kafka:
-    image: apache/kafka:latest
-
-  postgres:
-    image: postgres:16

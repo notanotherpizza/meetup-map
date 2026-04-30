@@ -1,5 +1,13 @@
 version: "3.8"
 
+x-discovery-env: &discovery-env
+  APP_MODE: discovery
+  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+  KAFKA_SSL_CA: ${KAFKA_SSL_CA}
+  KAFKA_SSL_CERT: ${KAFKA_SSL_CERT}
+  KAFKA_SSL_KEY: ${KAFKA_SSL_KEY}
+  POSTGRES_URI: ${POSTGRES_URI}
+
 x-worker-env: &worker-env
   APP_MODE: worker
   KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
@@ -10,10 +18,8 @@ x-worker-env: &worker-env
   TOPIC_GROUPS_RAW: groups-raw
   TOPIC_EVENTS_RAW: events-raw
   TOPIC_VENUES_RAW: venues-raw
-  PRO_NETWORKS: pydata
   MAX_EVENTS_PER_GROUP: "50"
   REQUEST_DELAY_SECONDS: "1.5"
-  PLAYWRIGHT_FALLBACK: "true"
 
 x-sink-env: &sink-env
   APP_MODE: sink
@@ -27,6 +33,26 @@ x-sink-env: &sink-env
   TOPIC_VENUES_RAW: venues-raw
 
 services:
+  # Discovery workers - search Meetup/Luma APIs for groups
+  discovery-1:
+    build: .
+    environment:
+      <<: *discovery-env
+      WORKER_ID: discovery-1
+
+  discovery-2:
+    build: .
+    environment:
+      <<: *discovery-env
+      WORKER_ID: discovery-2
+
+  discovery-3:
+    build: .
+    environment:
+      <<: *discovery-env
+      WORKER_ID: discovery-3
+
+  # Scrape workers - fetch group details and events
   worker-1:
     build: .
     environment:
@@ -45,6 +71,7 @@ services:
       <<: *worker-env
       WORKER_ID: worker-3
 
+  # Sink workers - write to Postgres
   sink-1:
     build: .
     environment:

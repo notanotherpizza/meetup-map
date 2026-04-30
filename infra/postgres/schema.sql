@@ -171,6 +171,28 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+-- Discovery tracking
+CREATE TABLE IF NOT EXISTS discovery_runs (
+    id          SERIAL      PRIMARY KEY,
+    mode        TEXT,       -- "ALL", "meetup", "luma", etc.
+    started_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS discovery_log (
+    id              SERIAL      PRIMARY KEY,
+    run_id          INT         REFERENCES discovery_runs(id),
+    task_id         TEXT        UNIQUE,  -- "{platform}:{topic}:{region}"
+    platform        TEXT,       -- "meetup" | "luma"
+    topic           TEXT,       -- search keyword/category
+    region          TEXT,       -- city/region label
+    groups_found    INT,        -- total groups returned by search
+    groups_new      INT,        -- groups not already in DB
+    worker_id       TEXT,
+    duration_ms     INT,
+    error           TEXT,
+    discovered_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS events_group_id_idx    ON events (group_id);
 CREATE INDEX IF NOT EXISTS events_starts_at_idx   ON events (starts_at DESC);
@@ -181,3 +203,7 @@ CREATE INDEX IF NOT EXISTS groups_platform_idx    ON groups (platform);
 CREATE INDEX IF NOT EXISTS venues_country_idx     ON venues (country);
 -- Composite index for render.py fetch_events CTE (ROW_NUMBER per group by date)
 CREATE INDEX IF NOT EXISTS events_group_starts_idx ON events (group_id, starts_at DESC);
+
+-- Discovery indexes
+CREATE INDEX IF NOT EXISTS discovery_log_platform_idx ON discovery_log (platform);
+CREATE INDEX IF NOT EXISTS discovery_log_discovered_at_idx ON discovery_log (discovered_at DESC);

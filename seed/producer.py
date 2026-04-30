@@ -31,7 +31,7 @@ from pathlib import Path
 import httpx
 
 from shared.kafka_client import ensure_topics, make_producer, publish
-from shared.models import GroupSeed
+from shared.models import DiscoveryTask, GroupSeed
 from shared.settings import Settings
 
 logging.basicConfig(
@@ -349,6 +349,7 @@ async def create_run(settings: Settings, mode: str) -> int | None:
 async def run(settings: Settings) -> None:
     log.info("Ensuring Kafka topics exist...")
     ensure_topics(settings, topics=[
+        settings.topic_discovery_tasks,
         settings.topic_groups_to_scrape,
         settings.topic_groups_raw,
         settings.topic_events_raw,
@@ -377,14 +378,63 @@ async def run(settings: Settings) -> None:
         return
 
     # ------------------------------------------------------------------ #
-    # DISCOVERED mode                                                      #
+    # DISCOVERED mode — emit discovery tasks to Kafka                      #
     # ------------------------------------------------------------------ #
     if networks_input == "DISCOVERED":
-        log.info("Discovered-only mode")
+        log.info("Discovery mode — emitting discovery tasks")
         await create_run(settings, "DISCOVERED")
-        total = seed_discovered_groups(settings, producer, seen_urlnames)
+
+        from community.discovery_config import TOPICS, REGIONS, LUMA_CATEGORIES, get_luma_city_slugs
+
+        now = datetime.now(timezone.utc)
+
+        # Meetup discovery tasks: topic × region
+        meetup_tasks = 0
+        for topic in TOPICS:
+            for label, lat, lon, radius, luma_slug in REGIONS:
+                task = DiscoveryTask(
+                    task_id=f"meetup:{topic}:{label}",
+                    platform="meetup",
+                    topic=topic,
+                    region=label,
+                    lat=lat,
+                    lon=lon,
+                    radius_miles=radius,
+                    created_at=now,
+                )
+                publish(
+                    producer,
+                    topic=settings.topic_discovery_tasks,
+                    value=task.model_dump(mode="json"),
+                    key=task.task_id,
+                )
+                meetup_tasks += 1
+
+        # Luma discovery tasks: city slugs + categories
+        luma_tasks = 0
+        luma_slugs = get_luma_city_slugs() + LUMA_CATEGORIES
+        for slug in luma_slugs:
+            task = DiscoveryTask(
+                task_id=f"luma:city:{slug}",
+                platform="luma",
+                topic=slug,
+                region=slug,
+                luma_slug=slug,
+                created_at=now,
+            )
+            publish(
+                producer,
+                topic=settings.topic_discovery_tasks,
+                value=task.model_dump(mode="json"),
+                key=task.task_id,
+            )
+            luma_tasks += 1
+
         producer.flush(timeout=30)
-        log.info("Discovered seed complete. %d groups published.", total)
+        log.info(
+            "Discovery tasks published: %d Meetup + %d Luma = %d total",
+            meetup_tasks, luma_tasks, meetup_tasks + luma_tasks,
+        )
         return
 
     # ------------------------------------------------------------------ #

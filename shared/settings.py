@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     postgres_uri: str = ""
 
     # Topics
+    topic_discovery_tasks: str = "discovery-tasks"
     topic_groups_to_scrape: str = "groups-to-scrape"
     topic_groups_raw: str = "groups-raw"
     topic_events_raw: str = "events-raw"

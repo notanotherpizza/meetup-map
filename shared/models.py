@@ -6,6 +6,33 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class DiscoveryTask(BaseModel):
+    """Published to: discovery-tasks
+
+    A task for discovery workers to search for groups matching
+    a topic/keyword in a specific region.
+    """
+    task_id: str                          # unique identifier: "{platform}:{topic}:{region}"
+    platform: str                         # "meetup" | "luma"
+    topic: str                            # search keyword/category
+    region: str                           # city/region label
+    lat: Optional[float] = None           # for Meetup geo search
+    lon: Optional[float] = None           # for Meetup geo search
+    radius_miles: Optional[int] = None    # for Meetup geo search
+    luma_slug: Optional[str] = None       # for Luma city page
+    created_at: datetime
+
+
+class DiscoveryResult(BaseModel):
+    """Published to: groups-to-scrape (from discovery workers)
+
+    Metadata about where the group was discovered.
+    """
+    discovered_by_task: Optional[str] = None  # task_id that found this group
+    discovery_topic: Optional[str] = None     # topic that matched
+    discovery_region: Optional[str] = None    # region where found
+
+
 class GroupSeed(BaseModel):
     """Published to: groups-to-scrape"""
     group_urlname: str

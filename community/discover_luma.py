@@ -29,38 +29,16 @@ from pathlib import Path
 
 import httpx
 
+from community.discovery_config import get_luma_city_slugs, get_luma_categories
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
 BASE_URL = "https://lu.ma"
 
-CITY_SLUGS = [
-    # UK
-    "london", "manchester", "edinburgh", "bristol", "dublin",
-    # Europe
-    "amsterdam", "berlin", "munich", "paris", "barcelona", "madrid",
-    "lisbon", "stockholm", "copenhagen", "oslo", "helsinki", "zurich",
-    "vienna", "warsaw", "prague", "brussels", "milan",
-    # North America
-    "sf", "nyc", "seattle", "austin", "boston", "chicago", "la",
-    "denver", "toronto", "vancouver",
-    # APAC
-    "singapore", "sydney", "melbourne", "tokyo", "bangalore", "mumbai",
-    "seoul", "hong-kong", "taipei",
-    # LATAM / MEA
-    "sao-paulo", "buenos-aires", "lagos", "nairobi", "cape-town",
-    "tel-aviv", "dubai",
-]
-
-# Confirmed 200 after redirect (checked April 2026).
-# Removed 404s: health, education
-CATEGORY_SLUGS = [
-    "tech", "ai", "science", "design", "climate",
-    "music", "sports", "finance", "crypto", "gaming", "wellness",
-    "food", "travel",
-    "genai-sf", "genai-nyc", "genai-london",
-]
+CITY_SLUGS = get_luma_city_slugs()
+CATEGORY_SLUGS = get_luma_categories()
 
 REQUEST_DELAY_S = 0.5
 

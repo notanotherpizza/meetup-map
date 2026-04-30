@@ -26,6 +26,8 @@ from pathlib import Path
 
 import httpx
 
+from community.discovery_config import get_meetup_cities, get_meetup_keywords
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -46,102 +48,8 @@ query eventSearch($filter: EventSearchFilter!, $first: Int, $after: String) {
 }
 """
 
-KEYWORDS = [
-    "python",
-    "data science",
-    "machine learning",
-    "artificial intelligence",
-    "AI",
-    "MLOps",
-    "LLM",
-    "kafka",
-    "data engineering",
-    "analytics",
-    "rust",
-    "golang",
-    "kubernetes",
-    "devops",
-    "cloud native",
-    "open source",
-    "javascript",
-    "react",
-    "typescript",
-    "backend",
-    "platform engineering",
-    "developer",
-    "tech meetup",
-    "startup",
-    "product",
-    "UX",
-    "security",
-    "data",
-]
-
-# (label, lat, lon, radius_miles)
-# Radius 50 miles gives good city coverage without too much overlap.
-# Larger cities like London/NYC get 30 miles; broader regions get 75.
-CITIES = [
-    # UK & Ireland
-    ("London",          51.51,  -0.12,  30),
-    ("Manchester",      53.48,  -2.24,  30),
-    ("Edinburgh",       55.95,  -3.19,  30),
-    ("Bristol",         51.45,  -2.59,  30),
-    ("Birmingham",      52.48,  -1.90,  30),
-    ("Leeds",           53.80,  -1.55,  30),
-    ("Dublin",          53.33,  -6.25,  30),
-    # Western Europe
-    ("Amsterdam",       52.37,   4.90,  30),
-    ("Berlin",          52.52,  13.40,  30),
-    ("Hamburg",         53.55,   9.99,  30),
-    ("Munich",          48.14,  11.58,  30),
-    ("Paris",           48.86,   2.35,  30),
-    ("Barcelona",       41.39,   2.16,  30),
-    ("Madrid",          40.42,  -3.70,  30),
-    ("Lisbon",          38.72,  -9.14,  30),
-    ("Stockholm",       59.33,  18.07,  30),
-    ("Copenhagen",      55.68,  12.57,  30),
-    ("Oslo",            59.91,  10.75,  30),
-    ("Helsinki",        60.17,  24.94,  30),
-    ("Zurich",          47.38,   8.54,  30),
-    ("Vienna",          48.21,  16.37,  30),
-    ("Warsaw",          52.23,  21.01,  30),
-    ("Prague",          50.08,  14.44,  30),
-    ("Brussels",        50.85,   4.35,  30),
-    ("Milan",           45.46,   9.19,  30),
-    ("Rome",            41.90,  12.50,  30),
-    # North America
-    ("San Francisco",   37.77, -122.42, 30),
-    ("New York",        40.71,  -74.01, 30),
-    ("Seattle",         47.61, -122.33, 30),
-    ("Austin",          30.27,  -97.74, 30),
-    ("Boston",          42.36,  -71.06, 30),
-    ("Chicago",         41.88,  -87.63, 30),
-    ("Los Angeles",     34.05, -118.24, 30),
-    ("Denver",          39.74, -104.98, 30),
-    ("Toronto",         43.65,  -79.38, 30),
-    ("Vancouver",       49.25, -123.12, 30),
-    ("Montreal",        45.51,  -73.55, 30),
-    # APAC
-    ("Singapore",        1.35,  103.82, 30),
-    ("Sydney",         -33.87,  151.21, 30),
-    ("Melbourne",      -37.81,  144.96, 30),
-    ("Tokyo",           35.69,  139.69, 30),
-    ("Bangalore",       12.97,   77.59, 30),
-    ("Mumbai",          19.08,   72.88, 30),
-    ("Seoul",           37.57,  126.98, 30),
-    ("Hong Kong",       22.32,  114.17, 30),
-    ("Taipei",          25.05,  121.53, 30),
-    ("Jakarta",         -6.21,  106.85, 30),
-    # LATAM / MEA
-    ("Sao Paulo",       -23.55, -46.63, 30),
-    ("Buenos Aires",    -34.60, -58.38, 30),
-    ("Bogota",           4.71,  -74.07, 30),
-    ("Lagos",            6.52,    3.38, 30),
-    ("Nairobi",         -1.29,   36.82, 30),
-    ("Cape Town",       -33.93,  18.42, 30),
-    ("Tel Aviv",        32.08,   34.78, 30),
-    ("Dubai",           25.20,   55.27, 30),
-]
+KEYWORDS = get_meetup_keywords()
+CITIES = get_meetup_cities()
 
 GQL_HEADERS = {
     "Content-Type": "application/json",

@@ -31,7 +31,7 @@ meetupmap-worker = "worker.scraper:main"
 meetupmap-sink   = "sink.consumer:main"
 
 [tool.setuptools.packages.find]
-include = ["seed*", "worker*", "sink*", "shared*", "map*"]
+include = ["seed*", "worker*", "sink*", "shared*", "map*", "discovery*", "community*"]
 
 [tool.ruff]
 line-length = 100

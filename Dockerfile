@@ -7,6 +7,8 @@ COPY sink/ sink/
 COPY worker/ worker/
 COPY seed/ seed/
 COPY map/ map/
+COPY discovery/ discovery/
+COPY community/ community/
 RUN pip install .
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh

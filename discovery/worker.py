@@ -5,7 +5,7 @@ Discovery worker: consumes DiscoveryTask messages from Kafka, searches
 Meetup/Luma APIs for matching groups, and publishes GroupSeed messages
 to the groups-to-scrape topic.
 
-Deduplicates against Postgres groups table to avoid re-seeding known groups.
+Stateless design: duplicates are handled by downstream upserts.
 
 Usage:
     python -m discovery.worker
@@ -20,8 +20,6 @@ import sys
 from datetime import datetime, timezone
 
 import httpx
-import psycopg
-from psycopg.rows import dict_row
 
 from shared.kafka_client import make_consumer, make_producer, publish
 from shared.models import DiscoveryTask, GroupSeed
@@ -227,15 +225,6 @@ async def search_luma(
         return []
 
 
-# ── Deduplication ─────────────────────────────────────────────────────────────
-
-def get_existing_groups(conn: psycopg.Connection) -> set[str]:
-    """Get set of existing group urlnames (lowercase) from Postgres."""
-    with conn.cursor() as cur:
-        cur.execute("SELECT LOWER(id) FROM groups")
-        return {row["lower"] for row in cur.fetchall()}
-
-
 # ── Task Processing ───────────────────────────────────────────────────────────
 
 async def process_task(
@@ -243,10 +232,9 @@ async def process_task(
     producer,
     settings: Settings,
     http_client: httpx.AsyncClient,
-    existing_groups: set[str],
-    worker_id: str,
-) -> tuple[int, int]:
-    """Process a discovery task. Returns (groups_found, groups_new)."""
+    seen_this_session: set[str],
+) -> int:
+    """Process a discovery task. Returns number of groups emitted."""
     now = datetime.now(timezone.utc)
     groups = []
 
@@ -261,13 +249,13 @@ async def process_task(
     elif task.platform == "luma" and task.luma_slug:
         groups = await search_luma(http_client, task.luma_slug)
 
-    new_count = 0
+    emitted = 0
     for group in groups:
         urlname = group["urlname"]
-        if urlname.lower() in existing_groups:
+        # Skip duplicates within this worker session
+        if urlname.lower() in seen_this_session:
             continue
-
-        existing_groups.add(urlname.lower())
+        seen_this_session.add(urlname.lower())
 
         pro_network = f"discovered_{task.platform}"
 
@@ -288,44 +276,9 @@ async def process_task(
             value=seed.model_dump(mode="json"),
             key=seed.group_urlname,
         )
-        new_count += 1
+        emitted += 1
 
-    return len(groups), new_count
-
-
-# ── Logging to Postgres ───────────────────────────────────────────────────────
-
-def log_discovery(
-    conn: psycopg.Connection,
-    task: DiscoveryTask,
-    groups_found: int,
-    groups_new: int,
-    worker_id: str,
-    duration_ms: int,
-    error: str | None = None,
-) -> None:
-    """Log discovery task result to Postgres."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO discovery_log
-                (task_id, platform, topic, region, groups_found, groups_new,
-                 worker_id, duration_ms, error)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (task_id) DO UPDATE SET
-                groups_found = EXCLUDED.groups_found,
-                groups_new = EXCLUDED.groups_new,
-                worker_id = EXCLUDED.worker_id,
-                duration_ms = EXCLUDED.duration_ms,
-                error = EXCLUDED.error,
-                discovered_at = now()
-            """,
-            (
-                task.task_id, task.platform, task.topic, task.region,
-                groups_found, groups_new, worker_id, duration_ms, error,
-            ),
-        )
-    conn.commit()
+    return emitted
 
 
 # ── Main Loop ─────────────────────────────────────────────────────────────────
@@ -350,78 +303,69 @@ def run(settings: Settings) -> None:
 
     tasks_processed = 0
     groups_discovered = 0
+    seen_this_session: set[str] = set()
 
-    with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as conn:
-        existing_groups = get_existing_groups(conn)
-        log.info("Loaded %d existing groups from Postgres", len(existing_groups))
+    async def process_loop():
+        nonlocal tasks_processed, groups_discovered, empty_polls
 
-        async def process_loop():
-            nonlocal tasks_processed, groups_discovered, empty_polls
+        async with httpx.AsyncClient() as http_client:
+            while True:
+                msg = consumer.poll(timeout=5.0)
 
-            async with httpx.AsyncClient() as http_client:
-                while True:
-                    msg = consumer.poll(timeout=5.0)
-
-                    if msg is None:
-                        if drain_mode:
-                            empty_polls += 1
-                            log.info(
-                                "No messages (%d/%d)... tasks: %d, groups: %d",
-                                empty_polls, empty_polls_needed,
-                                tasks_processed, groups_discovered,
-                            )
-                            if empty_polls >= empty_polls_needed:
-                                log.info("Topic drained — exiting.")
-                                break
-                        continue
-
-                    if msg.error():
-                        log.error("Kafka error: %s", msg.error())
-                        continue
-
-                    empty_polls = 0
-
-                    try:
-                        payload = json.loads(msg.value())
-                        task = DiscoveryTask(**payload)
-
-                        start_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-
-                        found, new = await process_task(
-                            task, producer, settings, http_client,
-                            existing_groups, worker_id,
-                        )
-
-                        duration_ms = int(datetime.now(timezone.utc).timestamp() * 1000) - start_ms
-
-                        log_discovery(conn, task, found, new, worker_id, duration_ms)
-
-                        tasks_processed += 1
-                        groups_discovered += new
-
+                if msg is None:
+                    if drain_mode:
+                        empty_polls += 1
                         log.info(
-                            "[%s] %s/%s: found %d, %d new (total: %d tasks, %d groups)",
-                            task.platform, task.topic, task.region,
-                            found, new, tasks_processed, groups_discovered,
+                            "No messages (%d/%d)... tasks: %d, groups: %d",
+                            empty_polls, empty_polls_needed,
+                            tasks_processed, groups_discovered,
                         )
+                        if empty_polls >= empty_polls_needed:
+                            log.info("Topic drained — exiting.")
+                            break
+                    continue
 
-                        consumer.commit(msg)
-                        producer.flush(timeout=10)
+                if msg.error():
+                    log.error("Kafka error: %s", msg.error())
+                    continue
 
-                        await asyncio.sleep(REQUEST_DELAY_S)
+                empty_polls = 0
 
-                    except Exception as e:
-                        log.error("Failed to process task: %s", e, exc_info=True)
+                try:
+                    payload = json.loads(msg.value())
+                    task = DiscoveryTask(**payload)
 
-        try:
-            asyncio.run(process_loop())
-        except KeyboardInterrupt:
-            log.info(
-                "Shutting down. Processed %d tasks, discovered %d groups.",
-                tasks_processed, groups_discovered,
-            )
-        finally:
-            consumer.close()
+                    emitted = await process_task(
+                        task, producer, settings, http_client,
+                        seen_this_session,
+                    )
+
+                    tasks_processed += 1
+                    groups_discovered += emitted
+
+                    log.info(
+                        "[%s] %s/%s: emitted %d groups (total: %d tasks, %d groups)",
+                        task.platform, task.topic, task.region,
+                        emitted, tasks_processed, groups_discovered,
+                    )
+
+                    consumer.commit(msg)
+                    producer.flush(timeout=10)
+
+                    await asyncio.sleep(REQUEST_DELAY_S)
+
+                except Exception as e:
+                    log.error("Failed to process task: %s", e, exc_info=True)
+
+    try:
+        asyncio.run(process_loop())
+    except KeyboardInterrupt:
+        log.info(
+            "Shutting down. Processed %d tasks, discovered %d groups.",
+            tasks_processed, groups_discovered,
+        )
+    finally:
+        consumer.close()
 
 
 def main() -> None:

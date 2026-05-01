@@ -6,7 +6,6 @@ x-discovery-env: &discovery-env
   KAFKA_SSL_CA: ${KAFKA_SSL_CA}
   KAFKA_SSL_CERT: ${KAFKA_SSL_CERT}
   KAFKA_SSL_KEY: ${KAFKA_SSL_KEY}
-  POSTGRES_URI: ${POSTGRES_URI}
 
 x-worker-env: &worker-env
   APP_MODE: worker

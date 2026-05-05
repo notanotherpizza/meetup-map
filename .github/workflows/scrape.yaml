@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       networks:
-        description: "Pro networks (space separated, or ALL, or COMMUNITY, or DISCOVERED)"
+        description: "Pro networks (space separated, or ALL, or COMMUNITY)"
         default: "ALL"
   schedule:
     - cron: "0 2 * * *" # every day at 02:00 UTC
@@ -62,8 +62,7 @@ jobs:
           poll_interval = 60   # seconds
           max_wait      = 9 * 3600  # 9 hours
 
-          # Fast modes — cap the wait time
-          if networks_str in ("COMMUNITY", "DISCOVERED"):
+          if networks_str == "COMMUNITY":
               max_wait = 30 * 60  # 30 minutes
 
           print(f"Polling for scrape completion (mode={networks_str})...")
@@ -86,8 +85,6 @@ jobs:
                                       THEN true
                                   WHEN run.networks = 'COMMUNITY'
                                       THEN g.pro_network = 'community'
-                                  WHEN run.networks = 'DISCOVERED'
-                                      THEN g.pro_network IN ('discovered_meetup', 'discovered_luma')
                                   ELSE
                                       g.pro_network = ANY(string_to_array(run.networks, ' '))
                               END

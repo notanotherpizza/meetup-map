@@ -1,0 +1,33 @@
+name: Discover
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *" # every day at 02:00 UTC (runs parallel to scrape)
+concurrency:
+  group: discover
+  cancel-in-progress: false
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+
+      - name: Write certs
+        run: |
+          mkdir -p certs
+          echo "${{ secrets.KAFKA_CA_PEM }}"       > certs/ca.pem
+          echo "${{ secrets.KAFKA_SERVICE_CERT }}" > certs/service.cert
+          echo "${{ secrets.KAFKA_SERVICE_KEY }}"  > certs/service.key
+          chmod 600 certs/*
+
+      - name: Seed discovery tasks
+        env:
+          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
+          POSTGRES_URI:            ${{ secrets.POSTGRES_URI }}
+          PRO_NETWORKS_STR:        DISCOVERED
+        run: python -m seed.producer

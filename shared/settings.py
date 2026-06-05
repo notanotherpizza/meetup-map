@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     kafka_ssl_cert_file: str = "./certs/service.cert"
     kafka_ssl_key_file: str = "./certs/service.key"
 
-    # Inline cert contents (used on Fly.io)
+    # Inline cert contents (used when certs/ directory is not present, e.g. Aiven Apps)
     kafka_ssl_ca: str = ""
     kafka_ssl_cert: str = ""
     kafka_ssl_key: str = ""

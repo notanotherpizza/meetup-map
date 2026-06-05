@@ -36,6 +36,16 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+-- Add description column if missing (for existing deployments)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'groups' AND column_name = 'description'
+    ) THEN
+        ALTER TABLE groups ADD COLUMN description TEXT;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS venues (
     id              TEXT            PRIMARY KEY,  -- Meetup's venue ID or Luma's place_id
     name            TEXT,                         -- raw name from Meetup (often a postcode)

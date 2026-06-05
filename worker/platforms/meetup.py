@@ -42,6 +42,7 @@ GQL_QUERIES = {
 query groupHome($urlname: String!, $includePrivateInfo: Boolean) {
   groupByUrlname(urlname: $urlname) {
     name
+    description
     city
     country
     lat
@@ -175,11 +176,12 @@ class MeetupPlatform(Platform):
         )
 
         # Prefer scraped data over seed data for location fields
-        city    = group_home.get("city")    or seed.city
-        country = group_home.get("country") or seed.country
-        lat     = group_home.get("lat")     or seed.lat
-        lon     = group_home.get("lon")     or seed.lon
-        name    = group_home.get("name")    or seed.name or seed.group_urlname
+        city        = group_home.get("city")        or seed.city
+        country     = group_home.get("country")     or seed.country
+        lat         = group_home.get("lat")         or seed.lat
+        lon         = group_home.get("lon")         or seed.lon
+        name        = group_home.get("name")        or seed.name or seed.group_urlname
+        description = group_home.get("description") or None
 
         group = GroupRaw(
             group_urlname=seed.group_urlname,
@@ -191,6 +193,7 @@ class MeetupPlatform(Platform):
             member_count=member_count,
             lat=lat,
             lon=lon,
+            description=description,
             source_url=seed.group_url,
             scraped_at=now,
             scrape_method="gql2",

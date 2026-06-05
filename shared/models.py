@@ -62,6 +62,7 @@ class GroupRaw(BaseModel):
     source_url: str                   # was meetup_url
     scraped_at: datetime
     scrape_method: str
+    description: Optional[str] = None
     total_past_events: Optional[int] = None
     events_scrape_ok: bool = False
     worker_id: str

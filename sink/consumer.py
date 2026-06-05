@@ -122,12 +122,12 @@ def _build_address_query(address: str, city: str | None, country_name: str | Non
 UPSERT_GROUP = """
 INSERT INTO groups (
     id, name, pro_network, platform, city, country, lat, lon,
-    member_count, source_url, last_scraped_at, events_scraped_at,
+    member_count, source_url, description, last_scraped_at, events_scraped_at,
     total_past_events
 ) VALUES (
     %(group_urlname)s, %(name)s, %(pro_network)s, %(platform)s,
     %(city)s, %(country)s, %(lat)s, %(lon)s,
-    %(member_count)s, %(source_url)s, %(scraped_at)s,
+    %(member_count)s, %(source_url)s, %(description)s, %(scraped_at)s,
     %(events_scraped_at)s, %(total_past_events)s
 )
 ON CONFLICT (id) DO UPDATE SET
@@ -139,6 +139,7 @@ ON CONFLICT (id) DO UPDATE SET
     lon               = EXCLUDED.lon,
     member_count      = EXCLUDED.member_count,
     source_url        = EXCLUDED.source_url,
+    description       = COALESCE(EXCLUDED.description, groups.description),
     last_scraped_at   = EXCLUDED.last_scraped_at,
     events_scraped_at = COALESCE(EXCLUDED.events_scraped_at, groups.events_scraped_at),
     total_past_events = COALESCE(EXCLUDED.total_past_events, groups.total_past_events),

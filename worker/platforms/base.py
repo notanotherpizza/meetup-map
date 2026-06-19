@@ -54,13 +54,10 @@ class Platform(ABC):
         Scrape a group and all its events.
 
         Args:
-            seed:            The GroupSeed message consumed from Kafka.
-            browser:         A shared Playwright browser instance (may be unused
-                             by HTTP-only platforms).
-            http_client:     A shared httpx.AsyncClient (may be unused by
-                             Playwright-only platforms).
+            seed:            The GroupSeed to scrape.
+            http_client:     A shared httpx.AsyncClient.
             max_past_events: Cap on past events to fetch (0 = unlimited).
-            worker_id:       Hostname/identifier for scrape_log telemetry.
+            worker_id:       Hostname/identifier for telemetry.
 
         Returns:
             ScrapeResult with group, venues, and past + upcoming events.

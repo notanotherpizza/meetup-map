@@ -1,5 +1,60 @@
-version: "3"
 services:
+  lakekeeper:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: always
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=${LAKEKEEPER_ENCRYPTION_KEY}
+      - LAKEKEEPER__PG_DATABASE_URL_READ=${LAKEKEEPER_PG_URL:-postgresql://postgres:postgres@catalog-db:5432/postgres}
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=${LAKEKEEPER_PG_URL:-postgresql://postgres:postgres@catalog-db:5432/postgres}
+      - LAKEKEEPER__AUTHZ_BACKEND=allowall
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 1s
+      timeout: 10s
+      retries: 3
+      start_period: 3s
+    depends_on:
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8181:8181"
+    networks:
+      - meetupmap
+
+  lakekeeper-migrate:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: always
+    restart: "no"
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=${LAKEKEEPER_ENCRYPTION_KEY}
+      - LAKEKEEPER__PG_DATABASE_URL_READ=${LAKEKEEPER_PG_URL:-postgresql://postgres:postgres@catalog-db:5432/postgres}
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=${LAKEKEEPER_PG_URL:-postgresql://postgres:postgres@catalog-db:5432/postgres}
+      - LAKEKEEPER__AUTHZ_BACKEND=allowall
+    command: ["migrate"]
+    depends_on:
+      catalog-db:
+        condition: service_healthy
+    networks:
+      - meetupmap
+
+  catalog-db:
+    image: postgres:17
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -p 5432 -d postgres"]
+      interval: 2s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - catalog-db-data:/var/lib/postgresql/data
+    networks:
+      - meetupmap
+
   grafana:
     image: grafana/grafana:latest
     container_name: meetupmap-grafana
@@ -11,6 +66,12 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infra/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - meetupmap
+
+networks:
+  meetupmap:
 
 volumes:
+  catalog-db-data:
   grafana-data:

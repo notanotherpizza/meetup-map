@@ -107,7 +107,6 @@ class MeetupPlatform(Platform):
     async def scrape(
         self,
         seed: GroupSeed,
-        browser,
         http_client: httpx.AsyncClient,
         max_past_events: int,
         worker_id: str,

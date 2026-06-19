@@ -67,29 +67,12 @@ input.filter-input:focus { border-color: #111; }
 .view-btn:hover:not(.active) { background: #f5f5f5; }
 
 /* ── Results layout ── */
-#results-area { display: flex; max-width: 1100px; margin: 0 auto; padding: 12px 0; }
+#results-area { max-width: 780px; margin: 0 auto; padding: 12px 16px; }
 
 /* ── Platform pill ── */
 .platform-pill { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 1px 5px; border-radius: 2px; margin-left: 4px; vertical-align: middle; }
 .platform-pill.meetup { background: #e8f4fd; color: #1a6fa8; border: 1px solid #b8d9f0; }
 .platform-pill.luma   { background: #fef3e8; color: #b85c00; border: 1px solid #f5d0a0; }
-
-/* ── Sidebar ── */
-#sidebar { width: 190px; flex-shrink: 0; padding: 4px 14px 8px 12px; border-right: 1px solid #e0e0e0; }
-.sidebar-section { margin-bottom: 18px; }
-.sidebar-section.hidden { display: none; }
-.sidebar-title { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #999; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #eee; }
-
-/* Clickable sidebar items (status) */
-.sidebar-item { display: flex; align-items: center; gap: 6px; padding: 3px 4px; cursor: pointer; font-size: 12px; color: #444; border-radius: 2px; user-select: none; }
-.sidebar-item:hover { background: #f5f5f5; color: #111; }
-.sidebar-item.active { color: #111; font-weight: 600; }
-
-/* Range band buttons */
-.band-row { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 4px; }
-.band-btn { font-size: 10px; font-family: 'DM Sans', sans-serif; padding: 2px 6px; border: 1px solid #ccc; background: #fff; color: #555; cursor: pointer; border-radius: 2px; white-space: nowrap; }
-.band-btn:hover { border-color: #888; color: #111; }
-.band-btn.active { background: #111; color: #fff; border-color: #111; }
 .band-free { width: 100%; margin-top: 3px; height: 22px; font-size: 11px; font-family: 'DM Sans', sans-serif; border: 1px solid #ccc; padding: 0 6px; color: #111; outline: none; }
 .band-free:focus { border-color: #111; }
 .band-free::placeholder { color: #bbb; }
@@ -111,7 +94,7 @@ input.filter-input:focus { border-color: #111; }
 /* date-row CSS removed — replaced by date chip builder */
 
 /* ── Main ── */
-#main-content { flex: 1; padding: 0 20px; min-width: 0; }
+#main-content { padding: 0; min-width: 0; }
 #stats-bar { font-size: 11px; color: #999; border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-family: 'Courier Prime', monospace; }
 #stats-bar strong { color: #111; }
 
@@ -160,9 +143,7 @@ input.filter-input:focus { border-color: #111; }
   #filter-strip { gap: 5px; margin-bottom: 8px; }
   .filter-label { display: none; }
   .filter-sep { display: none; }
-  #loc-input { min-width: 60px !important; }
-  #tag-input { font-size: 13px; }
-  #sidebar { display: none; }
+  #results-area { padding: 8px 12px; }
 }
 #spinner {
   display: none;
@@ -188,6 +169,41 @@ input.filter-input:focus { border-color: #111; }
 <div id="topbar">
   <a href="group_map.html">Full map</a>
   <a href="https://notanotherpizza.com">About</a>
+  <span id="download-link" style="display:none"><a href="#" onclick="openDownloadPanel();return false;">Download data</a></span>
+</div>
+
+<!-- Download panel (hidden until opened) -->
+<div id="download-panel" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:9000;background:rgba(0,0,0,0.5)" onclick="if(event.target===this)closeDownloadPanel()">
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border:2px solid #111;padding:28px 32px;max-width:480px;width:90%;font-family:'DM Sans',sans-serif">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+      <strong style="font-size:15px">Download data</strong>
+      <span onclick="closeDownloadPanel()" style="cursor:pointer;font-size:18px;color:#888">✕</span>
+    </div>
+    <div style="font-size:12px;color:#555;margin-bottom:16px">
+      Download the full dataset or filter by date. All times UTC.
+    </div>
+    <div style="display:grid;gap:10px;margin-bottom:18px">
+      <label style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#888">From date
+        <input type="date" id="dl-from" style="width:100%;margin-top:3px;height:30px;border:1px solid #bbb;padding:0 8px;font-size:12px;font-family:inherit">
+      </label>
+      <label style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#888">To date
+        <input type="date" id="dl-to" style="width:100%;margin-top:3px;height:30px;border:1px solid #bbb;padding:0 8px;font-size:12px;font-family:inherit">
+      </label>
+      <label style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#888">Format
+        <select id="dl-format" style="width:100%;margin-top:3px;height:30px;border:1px solid #bbb;padding:0 8px;font-size:12px;font-family:inherit">
+          <option value="parquet">Parquet</option>
+          <option value="csv">CSV</option>
+          <option value="json">JSON</option>
+        </select>
+      </label>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <button onclick="downloadDataset('groups')" style="height:36px;font-size:12px;font-family:inherit;border:1px solid #111;background:#111;color:#fff;cursor:pointer">Groups</button>
+      <button onclick="downloadDataset('events')" style="height:36px;font-size:12px;font-family:inherit;border:1px solid #111;background:#111;color:#fff;cursor:pointer">Events</button>
+      <button onclick="downloadDataset('venues')" style="height:36px;font-size:12px;font-family:inherit;border:1px solid #111;background:#111;color:#fff;cursor:pointer">Venues</button>
+    </div>
+    <div id="dl-error" style="display:none;margin-top:12px;font-size:12px;color:#c00"></div>
+  </div>
 </div>
 
 <div id="hero">
@@ -220,82 +236,6 @@ input.filter-input:focus { border-color: #111; }
 </div>
 
 <div id="results-area">
-  <div id="sidebar">
-
-    <!-- GROUP FILTERS -->
-    <div class="sidebar-section" id="sec-status">
-      <div class="sidebar-title">Status</div>
-      <div class="sidebar-item active" data-status="all" onclick="toggleStatus(this,'all')">All</div>
-      <div class="sidebar-item" data-status="upcoming" onclick="toggleStatus(this,'upcoming')">Has upcoming</div>
-      <div class="sidebar-item" data-status="active" onclick="toggleStatus(this,'active')">Active groups</div>
-    </div>
-
-    <div class="sidebar-section" id="sec-network">
-      <div class="sidebar-title">Network</div>
-      <input type="text" class="network-search" id="network-search" placeholder="Filter networks…" oninput="renderNetworkList()" />
-      <div id="network-list"></div>
-    </div>
-
-    <div class="sidebar-section" id="sec-members">
-      <div class="sidebar-title">Members</div>
-      <div class="band-row" id="member-bands">
-        <button class="band-btn active" data-min="0" onclick="setBand('member', this, 0)">Any</button>
-        <button class="band-btn" data-min="50" onclick="setBand('member', this, 50)">50+</button>
-        <button class="band-btn" data-min="250" onclick="setBand('member', this, 250)">250+</button>
-        <button class="band-btn" data-min="1000" onclick="setBand('member', this, 1000)">1k+</button>
-        <button class="band-btn" data-min="5000" onclick="setBand('member', this, 5000)">5k+</button>
-      </div>
-      <input type="number" class="band-free" id="member-min-free" placeholder="Min members…" min="0" oninput="onFreeMin('member')" />
-    </div>
-
-    <div class="sidebar-section" id="sec-events-count">
-      <div class="sidebar-title">Past events</div>
-      <div class="band-row" id="events-count-bands">
-        <button class="band-btn active" data-min="0" onclick="setBand('evcount', this, 0)">Any</button>
-        <button class="band-btn" data-min="5" onclick="setBand('evcount', this, 5)">5+</button>
-        <button class="band-btn" data-min="20" onclick="setBand('evcount', this, 20)">20+</button>
-        <button class="band-btn" data-min="50" onclick="setBand('evcount', this, 50)">50+</button>
-        <button class="band-btn" data-min="100" onclick="setBand('evcount', this, 100)">100+</button>
-      </div>
-      <input type="number" class="band-free" id="evcount-min-free" placeholder="Min past events…" min="0" oninput="onFreeMin('evcount')" />
-    </div>
-
-    <div class="sidebar-section" id="sec-scraped">
-      <div class="sidebar-title">Data quality</div>
-      <label class="check-row">
-        <input type="checkbox" id="chk-scraped" onchange="runSearch()" />
-        Events scraped only
-      </label>
-    </div>
-
-    <!-- EVENT FILTERS -->
-    <div class="sidebar-section" id="sec-platform">
-      <div class="sidebar-title">Platform</div>
-      <div class="sidebar-item active" data-platform="all" onclick="togglePlatform(this,'all')">All</div>
-      <div class="sidebar-item" data-platform="meetup" onclick="togglePlatform(this,'meetup')">Meetup <span class="platform-pill meetup">Meetup</span></div>
-      <div class="sidebar-item" data-platform="luma" onclick="togglePlatform(this,'luma')">Luma <span class="platform-pill luma">Luma</span></div>
-    </div>
-
-    <div class="sidebar-section" id="sec-online">
-      <div class="sidebar-title">Format</div>
-      <div class="sidebar-item active" data-online="all" onclick="toggleOnline(this,'all')">All</div>
-      <div class="sidebar-item" data-online="inperson" onclick="toggleOnline(this,'inperson')">In person</div>
-      <div class="sidebar-item" data-online="online" onclick="toggleOnline(this,'online')">Online</div>
-    </div>
-
-    <div class="sidebar-section" id="sec-rsvp">
-      <div class="sidebar-title">Min RSVPs</div>
-      <div class="band-row" id="rsvp-bands">
-        <button class="band-btn active" data-min="0" onclick="setBand('rsvp', this, 0)">Any</button>
-        <button class="band-btn" data-min="10" onclick="setBand('rsvp', this, 10)">10+</button>
-        <button class="band-btn" data-min="50" onclick="setBand('rsvp', this, 50)">50+</button>
-        <button class="band-btn" data-min="100" onclick="setBand('rsvp', this, 100)">100+</button>
-      </div>
-      <input type="number" class="band-free" id="rsvp-min-free" placeholder="Min RSVPs…" min="0" oninput="onFreeMin('rsvp')" />
-    </div>
-
-  </div><!-- /sidebar -->
-
   <div id="main-content">
     <div id="stats-bar">
       <span id="stats-text">Ready</span>
@@ -312,119 +252,37 @@ input.filter-input:focus { border-color: #111; }
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script>
-const GROUPS      = __GROUPS__;
-const EVENTS      = __EVENTS__;
-const NETWORKS    = __NETWORKS__;
+// Download service base URL — set to your deployed Aiven App URL.
+// Leave empty to hide the download panel (static-only mode).
+const DOWNLOAD_API = '';
+
+// NETWORKS is small — injected at build time for fast sidebar render.
+// Wrapped in try/catch so a broken build doesn't kill the whole page.
+let NETWORKS = [];
+try { NETWORKS = __NETWORKS__; } catch(e) { console.warn('NETWORKS not injected:', e); }
+
+// GROUPS and EVENTS are loaded lazily from static data files
+let GROUPS     = [];
+let EVENTS     = [];
+let _dataReady = false;
 let CITY_COORDS = null; // loaded lazily from cities.json on first geo search
 
 // ── State ─────────────────────────────────────────────────────────────────
-let currentView   = 'list';
-let activeNetwork  = 'all';
-let activePlatform = 'all';
-let activeStatus  = 'all';
-let activeOnline  = 'all';
-let minMembers    = 0;
-let minEvcount    = 0;
-let minRsvp       = 0;
-let currentPage   = 1;
-const PAGE_SIZE   = 10;
-let leafletMap    = null;
-let clusterGroup  = null;
+let currentView  = 'list';
+let currentPage  = 1;
+const PAGE_SIZE  = 10;
+let leafletMap   = null;
+let clusterGroup = null;
 
 // ── Group id → lat/lon lookup for event map markers ───────────────────────
-const groupLatLon = {};
+// Populated after data/groups.json loads
+const groupLatLon   = {};
 const groupNetwork  = {};
 const groupPlatform = {};
-GROUPS.forEach(g => {
-  if (g.lat && g.lon) groupLatLon[g.id] = { lat: g.lat, lon: g.lon, color: g.color };
-  groupNetwork[g.id]  = g.network;
-  groupPlatform[g.id] = g.platform;
-});
 
-// ── Sidebar visibility by type ────────────────────────────────────────────
-const GROUP_SECTIONS  = ['sec-status','sec-platform','sec-members','sec-events-count','sec-scraped'];
-const EVENT_SECTIONS  = ['sec-online','sec-rsvp'];
+function onTypeChange() { runSearch(); }
 
-function updateSidebarVisibility() {
-  const type = document.getElementById('filter-type').value;
-  GROUP_SECTIONS.forEach(id => {
-    document.getElementById(id).classList.toggle('hidden', type === 'events');
-  });
-  EVENT_SECTIONS.forEach(id => {
-    document.getElementById(id).classList.toggle('hidden', type === 'groups');
-  });
-}
-
-function onTypeChange() {
-  updateSidebarVisibility();
-  runSearch();
-}
-
-// ── Network list ──────────────────────────────────────────────────────────
-function renderNetworkList() {
-  const term = document.getElementById('network-search').value.trim().toLowerCase();
-  const list = document.getElementById('network-list');
-  const filtered = NETWORKS.filter(n => !term || n.name.toLowerCase().includes(term));
-  list.innerHTML = filtered.slice(0, 60).map(n => `
-    <div class="network-item ${activeNetwork === n.name ? 'active' : ''}"
-         onclick="setNetwork('${n.name.replace(/'/g,"\\'")}')">
-      <span class="network-dot" style="background:${n.colour}"></span>
-      <span>${n.name}</span>
-      <span class="network-count">${n.count}</span>
-    </div>`).join('');
-}
-
-function setNetwork(name) {
-  activeNetwork = activeNetwork === name ? 'all' : name;
-  renderNetworkList();
-  runSearch();
-}
-
-// ── Band buttons ──────────────────────────────────────────────────────────
-function setBand(type, el, val) {
-  const bandId = type === 'member' ? 'member-bands' : type === 'evcount' ? 'events-count-bands' : 'rsvp-bands';
-  const freeId = type === 'member' ? 'member-min-free' : type === 'evcount' ? 'evcount-min-free' : 'rsvp-min-free';
-  document.querySelectorAll(`#${bandId} .band-btn`).forEach(b => b.classList.remove('active'));
-  el.classList.add('active');
-  document.getElementById(freeId).value = '';
-  if (type === 'member')  minMembers = val;
-  if (type === 'evcount') minEvcount = val;
-  if (type === 'rsvp')    minRsvp    = val;
-  runSearch();
-}
-
-function onFreeMin(type) {
-  const freeId = type === 'member' ? 'member-min-free' : type === 'evcount' ? 'evcount-min-free' : 'rsvp-min-free';
-  const bandId = type === 'member' ? 'member-bands' : type === 'evcount' ? 'events-count-bands' : 'rsvp-bands';
-  const val = parseInt(document.getElementById(freeId).value) || 0;
-  document.querySelectorAll(`#${bandId} .band-btn`).forEach(b => b.classList.remove('active'));
-  if (type === 'member')  minMembers = val;
-  if (type === 'evcount') minEvcount = val;
-  if (type === 'rsvp')    minRsvp    = val;
-  runSearch();
-}
-
-// ── Status / online toggles ───────────────────────────────────────────────
-function toggleStatus(el, val) {
-  document.querySelectorAll('[data-status]').forEach(i => i.classList.remove('active'));
-  el.classList.add('active');
-  activeStatus = val;
-  runSearch();
-}
-
-function toggleOnline(el, val) {
-  document.querySelectorAll('[data-online]').forEach(i => i.classList.remove('active'));
-  el.classList.add('active');
-  activeOnline = val;
-  runSearch();
-}
-
-function togglePlatform(el, val) {
-  document.querySelectorAll('[data-platform]').forEach(i => i.classList.remove('active'));
-  el.classList.add('active');
-  activePlatform = val;
-  runSearch();
-}
+function renderNetworkList() {} // no-op — sidebar removed
 
 // ── Boolean query parser & evaluator ────────────────────────────────────
 // AST nodes:
@@ -863,18 +721,10 @@ function itemScoreFromTags(item){ return currentAst ? (scoreAst(currentAst, item
 
 function getResults() {
   const type = document.getElementById('filter-type').value;
-  const scrapedOnly = document.getElementById('chk-scraped').checked;
   let items  = [];
 
   if (type !== 'events') {
     const gs = GROUPS.filter(g => {
-      if (activeNetwork !== 'all' && g.network !== activeNetwork) return false;
-      if (activePlatform !== 'all' && g.platform !== activePlatform) return false;
-      if (activeStatus === 'upcoming' && (g.upcoming || 0) <= 0) return false;
-      if (activeStatus === 'active'   && g.event_status !== 'ok') return false;
-      if ((g.members || 0) < minMembers) return false;
-      if ((g.total_events || 0) < minEvcount) return false;
-      if (scrapedOnly && g.event_status === 'unscraped') return false;
       if (!itemMatchesTags(g)) return false;
       return true;
     }).map(g => ({ ...g, _type: 'group', _score: itemScoreFromTags(g) }));
@@ -883,11 +733,6 @@ function getResults() {
 
   if (type !== 'groups' && EVENTS.length) {
     const es = EVENTS.filter(e => {
-      if (activeNetwork !== 'all' && groupNetwork[e.group_id] !== activeNetwork) return false;
-      if (activePlatform !== 'all' && groupPlatform[e.group_id] !== activePlatform) return false;
-      if (activeOnline === 'online'   && !e.is_online) return false;
-      if (activeOnline === 'inperson' &&  e.is_online) return false;
-      if ((e.rsvp_count || 0) < minRsvp) return false;
       if (!itemMatchesTags(e)) return false;
       return true;
     }).map(e => ({ ...e, _type: 'event', _score: itemScoreFromTags(e) }));
@@ -1057,6 +902,7 @@ function renderMap(items) {
 
 // ── Main ──────────────────────────────────────────────────────────────────
 function runSearch() {
+  if (!_dataReady) return;
   currentPage = 1;
   const spinner = document.getElementById('spinner');
   const listEl  = document.getElementById('list-view');
@@ -1099,28 +945,6 @@ function clearFilters() {
   currentAst = null; currentQuery = '';
   renderPreview();
   document.getElementById('filter-type').value = 'all';
-  document.getElementById('network-search').value = '';
-  document.getElementById('chk-scraped').checked = false;
-  document.getElementById('member-min-free').value = '';
-  document.getElementById('evcount-min-free').value = '';
-  document.getElementById('rsvp-min-free').value = '';
-  activeNetwork  = 'all';
-  activePlatform = 'all';
-  activeStatus  = 'all';
-  activeOnline  = 'all';
-  minMembers = 0; minEvcount = 0; minRsvp = 0;
-  document.querySelectorAll('[data-status]').forEach(i => i.classList.remove('active'));
-  document.querySelector('[data-status="all"]').classList.add('active');
-  document.querySelectorAll('[data-online]').forEach(i => i.classList.remove('active'));
-  document.querySelector('[data-online="all"]').classList.add('active');
-  document.querySelectorAll('[data-platform]').forEach(i => i.classList.remove('active'));
-  document.querySelector('[data-platform="all"]').classList.add('active');
-  document.querySelectorAll('.band-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector('#member-bands .band-btn[data-min="0"]').classList.add('active');
-  document.querySelector('#events-count-bands .band-btn[data-min="0"]').classList.add('active');
-  document.querySelector('#rsvp-bands .band-btn[data-min="0"]').classList.add('active');
-  updateSidebarVisibility();
-  renderNetworkList();
   history.replaceState(null, '', window.location.pathname);
   runSearch();
 }
@@ -1263,10 +1087,66 @@ searchBarInput.addEventListener('keydown', e => {
 });
 document.getElementById('qb-search-btn').addEventListener('click', () => { syncUrl(); runSearch(); });
 
+// ── Lazy-load groups + events from static data files ─────────────────────
+(function loadData() {
+  const spinner = document.getElementById('spinner');
+  spinner.style.display = 'block';
+  document.getElementById('stats-text').innerHTML = 'Loading data…';
+
+  Promise.all([
+    fetch('data/groups.json').then(r => r.json()),
+    fetch('data/events.json').then(r => r.json()).catch(() => []),
+  ]).then(([groups, events]) => {
+    GROUPS = groups;
+    EVENTS = events;
+    // Re-build group lookup tables
+    GROUPS.forEach(g => {
+      if (g.lat && g.lon) groupLatLon[g.id] = { lat: g.lat, lon: g.lon, color: g.color };
+      groupNetwork[g.id]  = g.network;
+      groupPlatform[g.id] = g.platform;
+    });
+    _dataReady = true;
+    spinner.style.display = 'none';
+    renderNetworkList();
+    runSearch();
+  }).catch(err => {
+    spinner.style.display = 'none';
+    document.getElementById('stats-text').innerHTML = 'Failed to load data';
+    console.error('Data load failed:', err);
+  });
+})();
+
 // Init
-updateSidebarVisibility();
-renderNetworkList();
-runSearch();
+
+// ── Download panel ────────────────────────────────────────────────────────
+(function() {
+  if (DOWNLOAD_API) document.getElementById('download-link').style.display = '';
+})();
+
+function openDownloadPanel()  { document.getElementById('download-panel').style.display = ''; }
+function closeDownloadPanel() { document.getElementById('download-panel').style.display = 'none'; }
+
+function downloadDataset(table) {
+  if (!DOWNLOAD_API) return;
+  const from   = document.getElementById('dl-from').value;
+  const to     = document.getElementById('dl-to').value;
+  const format = document.getElementById('dl-format').value;
+  const errEl  = document.getElementById('dl-error');
+  errEl.style.display = 'none';
+
+  const params = new URLSearchParams({ format });
+  if (from) params.set('from_date', from);
+  if (to)   params.set('to_date',   to);
+
+  const url = `${DOWNLOAD_API}/${table}?${params}`;
+  // Trigger browser download
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `meetupmap_${table}.${format}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
 
 // ── URL sync ─────────────────────────────────────────────────────────────
 function syncUrl() {
@@ -1279,29 +1159,12 @@ function syncUrl() {
 
 // ── Bootstrap from URL on load ────────────────────────────────────────────
 (function() {
-  const params   = new URLSearchParams(window.location.search);
-  const q        = params.get('q');
-  const network  = params.get('network');
-  const platform = params.get('platform');
-  let changed    = false;
-
+  const params = new URLSearchParams(window.location.search);
+  const q = params.get('q');
   if (q) {
     document.getElementById('search-bar-input').value = q;
     updateAst();
-    changed = true;
   }
-  if (network) {
-    const match = NETWORKS.find(n => n.name.toLowerCase() === network.toLowerCase());
-    if (match) { activeNetwork = match.name; renderNetworkList(); changed = true; }
-  }
-  if (platform && ['meetup','luma'].includes(platform)) {
-    activePlatform = platform;
-    document.querySelectorAll('[data-platform]').forEach(i => i.classList.remove('active'));
-    const el = document.querySelector(`[data-platform="${platform}"]`);
-    if (el) el.classList.add('active');
-    changed = true;
-  }
-  if (changed) runSearch();
 })();
 </script>
 </body>

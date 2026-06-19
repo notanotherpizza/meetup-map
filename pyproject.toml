@@ -7,8 +7,6 @@ name = "meetupmap"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "confluent-kafka>=2.3",
-    "psycopg[binary]>=3.1",
     "httpx>=0.27",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
@@ -16,9 +14,21 @@ dependencies = [
     "tenacity>=8.3",
     "structlog>=24.2",
     "rich>=13.7",
+    "pyiceberg[s3fs,pyarrow]>=0.7",
+    "pyarrow>=16",
+    "pandas>=2.2",
+    "duckdb>=1.1",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
 ]
 
 [project.optional-dependencies]
+# pip install ".[download]" — for Dockerfile.download
+download = [
+    "duckdb>=1.1",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -26,12 +36,12 @@ dev = [
 ]
 
 [project.scripts]
-meetupmap-seed   = "seed.producer:main"
-meetupmap-worker = "worker.scraper:main"
-meetupmap-sink   = "sink.consumer:main"
+meetupmap-batch    = "batch-worker.run:entrypoint"
+meetupmap-worker   = "worker.scraper:main"
+meetupmap-download = "download_service.serve:main"
 
 [tool.setuptools.packages.find]
-include = ["seed*", "worker*", "sink*", "shared*", "map*", "discovery*", "community*"]
+include = ["worker*", "shared*", "map*", "community*", "batch-worker*", "download_service*"]
 
 [tool.ruff]
 line-length = 100

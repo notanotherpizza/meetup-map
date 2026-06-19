@@ -1,16 +1,17 @@
-name: Build and push Docker image
+name: Build and push Docker images
 
 on:
   push:
     branches: [main]
     paths:
-      - 'seed/**'
       - 'worker/**'
-      - 'sink/**'
+      - 'batch-worker/**'
+      - 'download_service/**'
       - 'shared/**'
       - 'map/**'
       - 'pyproject.toml'
       - 'Dockerfile'
+      - 'Dockerfile.download'
 
 jobs:
   build:
@@ -18,6 +19,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+
+    strategy:
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            tag: batch
+          - dockerfile: Dockerfile.download
+            tag: download
 
     steps:
       - uses: actions/checkout@v4
@@ -29,12 +38,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push ${{ matrix.tag }}
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/arm64
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/notanotherpizza/meetup-map:latest
-            ghcr.io/notanotherpizza/meetup-map:${{ github.sha }}
+            ghcr.io/notanotherpizza/meetup-map-${{ matrix.tag }}:latest
+            ghcr.io/notanotherpizza/meetup-map-${{ matrix.tag }}:${{ github.sha }}

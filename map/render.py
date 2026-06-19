@@ -1,7 +1,7 @@
 """
 map/render.py
 ─────────────
-Queries Postgres and renders:
+Reads from Iceberg tables on R2 and renders:
   - docs/group_map.html  — self-contained Leaflet map
   - docs/index.html      — search page (injected from map/index_template.html)
 
@@ -14,197 +14,187 @@ import hashlib
 import colorsys
 import shutil
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import httpx
-import psycopg
-from psycopg.rows import dict_row
+import pandas as pd
+import pyarrow.compute as pc
 
+from shared.iceberg import make_catalog, get_tables
 from shared.settings import Settings
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 DOCS_DIR = Path("docs")
+PLACE_BOUNDS_CACHE = Path("map/place_bounds_cache.json")
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_HEADERS = {"User-Agent": "meetupmap/0.1 (github.com/notanotherpizza/meetup-map)"}
 
 
 def network_colour(network: str) -> str:
-    """Deterministic colour from network name — same network always same colour."""
     h = int(hashlib.md5(network.encode()).hexdigest()[:8], 16)
     hue = (h % 3600) / 3600
     r, g, b = colorsys.hls_to_rgb(hue, 0.45, 0.65)
     return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
 
 
-def fetch_groups(pg: psycopg.Connection) -> list[dict]:
-    with pg.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
-            WITH last_venue AS (
-                SELECT DISTINCT ON (e.group_id)
-                    e.group_id,
-                    v.lat,
-                    v.lon,
-                    v.geocode_source
-                FROM events e
-                JOIN venues v ON v.id = e.venue_id
-                WHERE e.status = 'past'
-                  AND v.lat IS NOT NULL
-                  AND v.lon IS NOT NULL
-                ORDER BY e.group_id, e.starts_at DESC
+# ── Iceberg data fetching ──────────────────────────────────────────────────────
+
+def fetch_data(settings: Settings) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load groups, events, venues from Iceberg. Returns latest snapshot of each."""
+    catalog = make_catalog(settings)
+    groups_table, events_table, venues_table = get_tables(catalog)
+
+    groups_df  = groups_table.scan().to_arrow().to_pandas()
+    events_df  = events_table.scan().to_arrow().to_pandas()
+    venues_df  = venues_table.scan().to_arrow().to_pandas()
+
+    log.info("Loaded: %d groups, %d events, %d venues", len(groups_df), len(events_df), len(venues_df))
+
+    # Deduplicate: keep most recently scraped record per group/event/venue
+    if not groups_df.empty:
+        groups_df = (groups_df
+                     .sort_values("scraped_at", ascending=False)
+                     .drop_duplicates(subset=["group_urlname"])
+                     .reset_index(drop=True))
+    if not events_df.empty:
+        events_df = (events_df
+                     .sort_values("scraped_at", ascending=False)
+                     .drop_duplicates(subset=["event_id"])
+                     .reset_index(drop=True))
+    if not venues_df.empty:
+        venues_df = (venues_df
+                     .sort_values("scraped_at", ascending=False)
+                     .drop_duplicates(subset=["venue_id"])
+                     .reset_index(drop=True))
+
+    return groups_df, events_df, venues_df
+
+
+def build_groups(groups_df: pd.DataFrame, events_df: pd.DataFrame, venues_df: pd.DataFrame) -> list[dict]:
+    """Join groups with event/venue data to produce the render-ready group list."""
+    if groups_df.empty:
+        return []
+
+    # Per-group event aggregates
+    if not events_df.empty:
+        ev = events_df.copy()
+        ev["starts_at"] = pd.to_datetime(ev["starts_at"], utc=True, errors="coerce")
+
+        agg = ev.groupby("group_urlname").agg(
+            total_events_in_db=("event_id", "count"),
+            upcoming_events=("status", lambda s: (s == "upcoming").sum()),
+            last_event_at=("starts_at", lambda s: s[ev.loc[s.index, "status"] == "past"].max()),
+        ).reset_index()
+
+        # Last past event venue lat/lon
+        past = ev[ev["status"] == "past"].dropna(subset=["venue_id"])
+        if not past.empty and not venues_df.empty:
+            past = past.sort_values("starts_at", ascending=False)
+            last_venue_event = past.drop_duplicates(subset=["group_urlname"])
+            merged = last_venue_event.merge(
+                venues_df[["venue_id", "lat", "lon", "geocode_source"]],
+                on="venue_id", how="left",
             )
-            SELECT
-                g.id,
-                g.name,
-                g.city,
-                g.country,
-                g.lat,
-                g.lon,
-                g.member_count,
-                g.source_url,
-                g.platform,
-                g.pro_network,
-                g.last_scraped_at,
-                g.events_scraped_at,
-                g.total_past_events,
-                COUNT(e.id)                                         AS total_events_in_db,
-                COUNT(e.id) FILTER (WHERE e.status = 'upcoming')   AS upcoming_events,
-                MAX(e.starts_at) FILTER (
-                    WHERE e.status = 'past'
-                )                                                   AS last_event_at,
-                lv.lat                                              AS last_event_lat,
-                lv.lon                                              AS last_event_lon,
-                lv.geocode_source                                   AS last_event_geocode_source
-            FROM groups g
-            LEFT JOIN events e ON e.group_id = g.id
-            LEFT JOIN last_venue lv ON lv.group_id = g.id
-            WHERE g.lat IS NOT NULL AND g.lon IS NOT NULL
-            GROUP BY g.id, lv.lat, lv.lon, lv.geocode_source
-            ORDER BY g.name
-        """)
-        return cur.fetchall()
-    with pg.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
-            SELECT
-                g.id,
-                g.name,
-                g.city,
-                g.country,
-                g.lat,
-                g.lon,
-                g.member_count,
-                g.source_url,
-                g.platform,
-                g.pro_network,
-                g.last_scraped_at,
-                g.events_scraped_at,
-                g.total_past_events,
-                COUNT(e.id)                                         AS total_events_in_db,
-                COUNT(e.id) FILTER (WHERE e.status = 'upcoming')   AS upcoming_events,
-                MAX(e.starts_at) FILTER (
-                    WHERE e.status = 'past'
-                )                                                   AS last_event_at,
-                (
-                    SELECT v.lat
-                    FROM events e2
-                    JOIN venues v ON v.id = e2.venue_id
-                    WHERE e2.group_id = g.id
-                      AND e2.status = 'past'
-                      AND v.lat IS NOT NULL
-                      AND v.lon IS NOT NULL
-                    ORDER BY e2.starts_at DESC
-                    LIMIT 1
-                )                                                   AS last_event_lat,
-                (
-                    SELECT v.lon
-                    FROM events e2
-                    JOIN venues v ON v.id = e2.venue_id
-                    WHERE e2.group_id = g.id
-                      AND e2.status = 'past'
-                      AND v.lat IS NOT NULL
-                      AND v.lon IS NOT NULL
-                    ORDER BY e2.starts_at DESC
-                    LIMIT 1
-                )                                                   AS last_event_lon,
-                (
-                    SELECT v.geocode_source
-                    FROM events e2
-                    JOIN venues v ON v.id = e2.venue_id
-                    WHERE e2.group_id = g.id
-                      AND e2.status = 'past'
-                      AND v.lat IS NOT NULL
-                      AND v.lon IS NOT NULL
-                    ORDER BY e2.starts_at DESC
-                    LIMIT 1
-                )                                                   AS last_event_geocode_source
-            FROM groups g
-            LEFT JOIN events e ON e.group_id = g.id
-            WHERE g.lat IS NOT NULL AND g.lon IS NOT NULL
-            GROUP BY g.id
-            ORDER BY g.name
-        """)
-        return cur.fetchall()
+            venue_loc = merged[["group_urlname", "lat", "lon", "geocode_source"]].rename(columns={
+                "lat": "last_event_lat",
+                "lon": "last_event_lon",
+                "geocode_source": "last_event_geocode_source",
+            })
+            agg = agg.merge(venue_loc, on="group_urlname", how="left")
+        else:
+            agg["last_event_lat"] = None
+            agg["last_event_lon"] = None
+            agg["last_event_geocode_source"] = None
+
+        groups_df = groups_df.merge(agg, on="group_urlname", how="left")
+    else:
+        groups_df["total_events_in_db"] = 0
+        groups_df["upcoming_events"] = 0
+        groups_df["last_event_at"] = None
+        groups_df["last_event_lat"] = None
+        groups_df["last_event_lon"] = None
+        groups_df["last_event_geocode_source"] = None
+
+    groups_df = groups_df[groups_df["lat"].notna() & groups_df["lon"].notna()]
+
+    rows = []
+    for _, g in groups_df.iterrows():
+        rows.append({
+            "id":                          g["group_urlname"],
+            "name":                        g.get("name") or g["group_urlname"],
+            "city":                        g.get("city") or "",
+            "country":                     g.get("country") or "",
+            "lat":                         g["lat"],
+            "lon":                         g["lon"],
+            "member_count":                int(g["member_count"] or 0),
+            "source_url":                  g.get("source_url") or "",
+            "platform":                    g.get("platform") or "meetup",
+            "pro_network":                 g.get("pro_network") or "",
+            "last_scraped_at":             g["scraped_at"],
+            "events_scraped_at":           g["scraped_at"] if g.get("events_scrape_ok") else None,
+            "total_past_events":           int(g["total_past_events"] or 0) if pd.notna(g.get("total_past_events")) else None,
+            "total_events_in_db":          int(g.get("total_events_in_db") or 0),
+            "upcoming_events":             int(g.get("upcoming_events") or 0),
+            "last_event_at":               g.get("last_event_at"),
+            "last_event_lat":              g.get("last_event_lat"),
+            "last_event_lon":              g.get("last_event_lon"),
+            "last_event_geocode_source":   g.get("last_event_geocode_source"),
+        })
+    return sorted(rows, key=lambda g: g["name"])
 
 
-def fetch_networks(pg: psycopg.Connection) -> list[dict]:
-    with pg.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
-            SELECT pro_network, count(*) as group_count
-            FROM groups
-            GROUP BY pro_network
-            ORDER BY group_count DESC
-        """)
-        rows = cur.fetchall()
-    return [
-        {"name": row["pro_network"], "colour": network_colour(row["pro_network"]), "count": row["group_count"]}
-        for row in rows
-    ]
+def build_networks(groups: list[dict]) -> list[dict]:
+    counts: dict[str, int] = {}
+    for g in groups:
+        n = g["pro_network"] or ""
+        counts[n] = counts.get(n, 0) + 1
+    return sorted(
+        [{"name": n, "colour": network_colour(n), "count": c} for n, c in counts.items()],
+        key=lambda x: -x["count"],
+    )
 
 
-def fetch_events(pg: psycopg.Connection) -> list[dict]:
-    """Fetch upcoming events in the next 90 days for the search index."""
-    with pg.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
-            SELECT
-                e.id,
-                e.title,
-                e.event_url,
-                e.status,
-                e.is_online,
-                e.starts_at,
-                e.rsvp_count,
-                g.name    AS group_name,
-                g.id      AS group_id,
-                g.city,
-                g.country
-            FROM events e
-            JOIN groups g ON g.id = e.group_id
-            WHERE e.status = 'upcoming'
-              AND e.starts_at BETWEEN now() AND now() + interval '90 days'
-            ORDER BY e.starts_at ASC
-        """)
-        return cur.fetchall()
+def build_upcoming_events(events_df: pd.DataFrame, groups_df: pd.DataFrame) -> list[dict]:
+    if events_df.empty:
+        return []
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(days=90)
+    ev = events_df.copy()
+    ev["starts_at"] = pd.to_datetime(ev["starts_at"], utc=True, errors="coerce")
+    upcoming = ev[
+        (ev["status"] == "upcoming") &
+        ev["starts_at"].notna() &
+        (ev["starts_at"] >= now) &
+        (ev["starts_at"] <= cutoff)
+    ].sort_values("starts_at")
+
+    gmap = groups_df.set_index("group_urlname")[["name", "city", "country"]].to_dict("index") if not groups_df.empty else {}
+
+    rows = []
+    for _, e in upcoming.iterrows():
+        g = gmap.get(e["group_urlname"], {})
+        rows.append({
+            "id":         e["event_id"],
+            "title":      e.get("title") or "",
+            "event_url":  e.get("event_url") or "",
+            "status":     e.get("status") or "",
+            "is_online":  bool(e.get("is_online")),
+            "starts_at":  e["starts_at"].isoformat() if pd.notna(e["starts_at"]) else None,
+            "rsvp_count": int(e["rsvp_count"] or 0) if pd.notna(e.get("rsvp_count")) else 0,
+            "group_name": g.get("name") or e["group_urlname"],
+            "group_id":   e["group_urlname"],
+            "city":       g.get("city") or "",
+            "country":    (g.get("country") or "").upper(),
+        })
+    return rows
 
 
-def get_total_workers_last_run(pg: psycopg.Connection) -> int:
-    with pg.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
-            SELECT COUNT(DISTINCT worker_id) AS count
-            FROM scrape_log
-            WHERE scraped_at >= (
-                SELECT started_at
-                FROM scrape_runs
-                WHERE id = (SELECT MAX(id) FROM scrape_runs)
-            )
-        """)
-        row = cur.fetchone()
-        return row["count"] if row is not None else 0
-
+# ── Place bounds (local JSON cache, Nominatim fallback) ───────────────────────
 
 def nominatim_bbox(query: str) -> tuple | None:
-    """Look up a place via Nominatim and return (min_lat, max_lat, min_lon, max_lon) or None."""
     try:
         resp = httpx.get(
             NOMINATIM_URL,
@@ -213,7 +203,7 @@ def nominatim_bbox(query: str) -> tuple | None:
             timeout=10,
         )
         results = resp.json()
-        time.sleep(1.1)  # Nominatim rate limit
+        time.sleep(1.1)
         if results and "boundingbox" in results[0]:
             bb = results[0]["boundingbox"]
             return (float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3]))
@@ -222,16 +212,12 @@ def nominatim_bbox(query: str) -> tuple | None:
     return None
 
 
-def fetch_place_bounds(groups: list[dict], pg: psycopg.Connection) -> dict:
-    """
-    Build a lookup of place -> bbox for all unique cities and countries in the
-    groups data. Checks geocode_cache first, falls back to Nominatim for misses,
-    and writes results back to the cache.
-
-    Returns dict keyed by lowercase place name:
-      { "london": [min_lat, max_lat, min_lon, max_lon], ... }
-    """
+def fetch_place_bounds(groups: list[dict]) -> dict:
     from shared.geocoding import COUNTRY_CODE_TO_NAME
+
+    cache: dict = {}
+    if PLACE_BOUNDS_CACHE.exists():
+        cache = json.loads(PLACE_BOUNDS_CACHE.read_text())
 
     places: set[str] = set()
     for g in groups:
@@ -244,61 +230,33 @@ def fetch_place_bounds(groups: list[dict], pg: psycopg.Connection) -> dict:
             if name:
                 places.add(name)
 
-    log.info("Looking up bboxes for %d unique places...", len(places))
-
-    bounds: dict = {}
-
-    with pg.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
-            SELECT query, bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon
-            FROM geocode_cache
-            WHERE bbox_min_lat IS NOT NULL
-              AND query = ANY(%s)
-        """, (list(places),))
-        for row in cur.fetchall():
-            bounds[row["query"]] = [
-                row["bbox_min_lat"], row["bbox_max_lat"],
-                row["bbox_min_lon"], row["bbox_max_lon"],
-            ]
-
-    log.info("Cache hits: %d / %d", len(bounds), len(places))
-
-    misses = [p for p in places if p not in bounds]
-    log.info("Nominatim lookups needed: %d", len(misses))
+    misses = [p for p in places if p not in cache]
+    log.info("Place bounds: %d cached, %d Nominatim lookups needed", len(places) - len(misses), len(misses))
 
     for place in misses:
         bb = nominatim_bbox(place)
         if bb:
-            bounds[place] = list(bb)
-            with pg.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO geocode_cache (query, bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (query) DO UPDATE SET
-                        bbox_min_lat = EXCLUDED.bbox_min_lat,
-                        bbox_max_lat = EXCLUDED.bbox_max_lat,
-                        bbox_min_lon = EXCLUDED.bbox_min_lon,
-                        bbox_max_lon = EXCLUDED.bbox_max_lon
-                """, (place, bb[0], bb[1], bb[2], bb[3]))
-            pg.commit()
-            log.debug("Cached bbox for '%s'", place)
+            cache[place] = list(bb)
 
-    log.info("Place bounds ready: %d entries", len(bounds))
-    return bounds
+    PLACE_BOUNDS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    PLACE_BOUNDS_CACHE.write_text(json.dumps(cache))
+    return cache
 
+
+# ── JS serialisation (unchanged from original) ─────────────────────────────────
 
 def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
     features = []
     for g in groups:
         last_event = None
-        if g["last_event_at"]:
+        if g["last_event_at"] is not None and pd.notna(g["last_event_at"]):
             le = g["last_event_at"]
             last_event = le.isoformat() if hasattr(le, "isoformat") else str(le)
 
         days_inactive = None
         if last_event:
             try:
-                le_dt = datetime.fromisoformat(last_event)
+                le_dt = datetime.fromisoformat(str(last_event))
                 if le_dt.tzinfo is None:
                     le_dt = le_dt.replace(tzinfo=timezone.utc)
                 days_inactive = (datetime.now(timezone.utc) - le_dt).days
@@ -306,15 +264,16 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
                 pass
 
         use_event_location = (
-            g["last_event_lat"] is not None and g["last_event_lon"] is not None
+            g["last_event_lat"] is not None and pd.notna(g["last_event_lat"]) and
+            g["last_event_lon"] is not None and pd.notna(g["last_event_lon"])
         )
         if use_event_location:
-            lat = round(g["last_event_lat"], 6)
-            lon = round(g["last_event_lon"], 6)
-            geocode_source = g["last_event_geocode_source"]
+            lat = round(float(g["last_event_lat"]), 6)
+            lon = round(float(g["last_event_lon"]), 6)
+            geocode_source = g["last_event_geocode_source"] or "group"
         else:
-            lat = round(g["lat"] or 0, 6)
-            lon = round(g["lon"] or 0, 6)
+            lat = round(float(g["lat"] or 0), 6)
+            lon = round(float(g["lon"] or 0), 6)
             geocode_source = "group"
 
         total_events_in_db = int(g["total_events_in_db"] or 0)
@@ -330,46 +289,32 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
             event_status = "ok"
 
         features.append({
-            "id": g["id"],
-            "lat": lat,
-            "lon": lon,
-            "name": g["name"] or g["id"],
-            "city": g["city"] or "",
-            "country": (g["country"] or "").upper(),
-            "members": g["member_count"] or 0,
-            "total_events": total_events,
-            "upcoming": int(g["upcoming_events"] or 0),
-            "days_inactive": days_inactive,
-            "url": g["source_url"] or "",
-            "network": g["pro_network"] or "",
-            "platform": g["platform"] or "meetup",
-            "color": colour_map.get(g["pro_network"] or "", "#8b5cf6"),
+            "id":             g["id"],
+            "lat":            lat,
+            "lon":            lon,
+            "name":           g["name"] or g["id"],
+            "city":           g["city"] or "",
+            "country":        (g["country"] or "").upper(),
+            "members":        g["member_count"] or 0,
+            "total_events":   total_events,
+            "upcoming":       int(g["upcoming_events"] or 0),
+            "days_inactive":  days_inactive,
+            "url":            g["source_url"] or "",
+            "network":        g["pro_network"] or "",
+            "platform":       g["platform"] or "meetup",
+            "color":          colour_map.get(g["pro_network"] or "", "#8b5cf6"),
             "event_location": use_event_location,
             "geocode_source": geocode_source,
-            "event_status": event_status,
+            "event_status":   event_status,
         })
-
-    return json.dumps(features, ensure_ascii=False)
+    return json.dumps(features, ensure_ascii=False, default=str)
 
 
 def events_to_js(events: list[dict]) -> str:
-    rows = []
-    for e in events:
-        rows.append({
-            "id":         e["id"],
-            "title":      e["title"] or "",
-            "event_url":  e["event_url"] or "",
-            "status":     e["status"] or "",
-            "is_online":  e["is_online"],
-            "starts_at":  e["starts_at"].isoformat() if e["starts_at"] else None,
-            "rsvp_count": e["rsvp_count"] or 0,
-            "group_name": e["group_name"] or "",
-            "group_id":   e["group_id"] or "",
-            "city":       e["city"] or "",
-            "country":    (e["country"] or "").upper(),
-        })
-    return json.dumps(rows, ensure_ascii=False)
+    return json.dumps(events, ensure_ascii=False, default=str)
 
+
+# ── HTML rendering (unchanged) ─────────────────────────────────────────────────
 
 def render(groups: list[dict], networks: list[dict], place_bounds: dict, generated_at: str) -> str:
     colour_map = {n["name"]: n["colour"] for n in networks}
@@ -750,7 +695,6 @@ document.getElementById('groups-legend-search').addEventListener('input', e => {
 renderLegend('');
 renderGroupsLegend('');
 
-// ── URL parameter handling ────────────────────────────────────────────────
 (function() {{
   const params       = new URLSearchParams(window.location.search);
   const cityParam    = (params.get('city')    || '').toLowerCase().trim();
@@ -782,95 +726,79 @@ renderGroupsLegend('');
 
 
 def main() -> None:
-    import re
-
     settings = Settings()
     DOCS_DIR.mkdir(exist_ok=True)
 
-    log.info("Connecting to Postgres...")
-    with psycopg.connect(settings.postgres_uri, row_factory=dict_row) as pg:
-        log.info("Fetching groups...")
-        groups = fetch_groups(pg)
-        log.info("Done groups: %d", len(groups))
+    log.info("Loading data from Iceberg...")
+    groups_df, events_df, venues_df = fetch_data(settings)
 
-        log.info("Fetching networks...")
-        networks = fetch_networks(pg)
-        log.info("Done networks: %d", len(networks))
+    log.info("Building groups...")
+    groups = build_groups(groups_df, events_df, venues_df)
+    log.info("Groups: %d", len(groups))
 
-        log.info("Fetching events...")
-        events = fetch_events(pg)
-        log.info("Done events: %d", len(events))
+    networks = build_networks(groups)
+    log.info("Networks: %d", len(networks))
 
-        log.info("Fetching place bounds...")
-        place_bounds = fetch_place_bounds(groups, pg)
-        log.info("Done place bounds: %d entries", len(place_bounds))
+    events = build_upcoming_events(events_df, groups_df)
+    log.info("Upcoming events (90d): %d", len(events))
 
-        total_workers = get_total_workers_last_run(pg)
-        generated_at  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    log.info("Fetching place bounds...")
+    place_bounds = fetch_place_bounds(groups)
 
-        colour_map    = {n["name"]: n["colour"] for n in networks}
-        groups_json   = groups_to_js(groups, colour_map)
-        events_json   = events_to_js(events)
-        networks_json = json.dumps(networks)
+    generated_at  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    colour_map    = {n["name"]: n["colour"] for n in networks}
+    groups_json   = groups_to_js(groups, colour_map)
+    events_json   = events_to_js(events)
+    networks_json = json.dumps(networks)
 
-        # ── group_map.html ────────────────────────────────────────────────
-        html = render(groups, networks, place_bounds, generated_at)
-        out  = DOCS_DIR / "group_map.html"
-        out.write_text(html, encoding="utf-8")
-        log.info("Written %s (%.1f KB)", out, len(html) / 1024)
+    # ── Static data artifacts (lazy-loaded by map pages) ──────────────────
+    data_dir = DOCS_DIR / "data"
+    data_dir.mkdir(exist_ok=True)
 
-        # ── index.html (search page) ──────────────────────────────────────
-        template_path = Path("map/index_template.html")
-        if template_path.exists():
-            filled = (template_path.read_text(encoding="utf-8")
-                .replace("__GROUPS__",   groups_json)
-                .replace("__EVENTS__",   events_json)
-                .replace("__NETWORKS__", networks_json))
-            index_out = DOCS_DIR / "index.html"
-            index_out.write_text(filled, encoding="utf-8")
-            log.info("Written %s (%.1f KB)", index_out, len(filled) / 1024)
-        else:
-            log.warning("map/index_template.html not found — skipping search page")
+    (data_dir / "groups.json").write_text(groups_json, encoding="utf-8")
+    log.info("Written docs/data/groups.json (%.1f KB)", len(groups_json) / 1024)
 
-    # ── Static assets (images etc referenced by index_template.html) ─────
+    (data_dir / "events.json").write_text(events_json, encoding="utf-8")
+    log.info("Written docs/data/events.json (%.1f KB)", len(events_json) / 1024)
+
+    (data_dir / "networks.json").write_text(networks_json, encoding="utf-8")
+    log.info("Written docs/data/networks.json")
+
+    place_bounds_json = json.dumps(place_bounds)
+    (data_dir / "place_bounds.json").write_text(place_bounds_json, encoding="utf-8")
+    log.info("Written docs/data/place_bounds.json")
+
+    # ── HTML pages ─────────────────────────────────────────────────────────
+    html = render(groups, networks, place_bounds, generated_at)
+    out  = DOCS_DIR / "group_map.html"
+    out.write_text(html, encoding="utf-8")
+    log.info("Written %s (%.1f KB)", out, len(html) / 1024)
+
+    template_path = Path("map/index_template.html")
+    if template_path.exists():
+        # Index template now lazy-loads groups/events/networks from data/*.json
+        # so we only inject __NETWORKS__ (small) for fast sidebar rendering
+        filled = (template_path.read_text(encoding="utf-8")
+            .replace("__NETWORKS__", networks_json))
+        index_out = DOCS_DIR / "index.html"
+        index_out.write_text(filled, encoding="utf-8")
+        log.info("Written %s (%.1f KB)", index_out, len(filled) / 1024)
+    else:
+        log.warning("map/index_template.html not found — skipping search page")
+
     for asset in ["hero.jpg", "favicon.ico", "logo.png"]:
         src = Path("map") / asset
         if src.exists():
             shutil.copy2(src, DOCS_DIR / asset)
-            log.info("Copied %s -> docs/", asset)
 
-    # ── stats.json ────────────────────────────────────────────────────────────
     stats = {
-        "groups": len(groups),
-        "events": sum(int(g["total_events_in_db"] or 0) for g in groups),
-        "platforms": len(set(g["platform"] for g in groups if g.get("platform"))),
+        "groups":       len(groups),
+        "events":       sum(int(g["total_events_in_db"] or 0) for g in groups),
+        "platforms":    len(set(g["platform"] for g in groups if g.get("platform"))),
         "generated_at": generated_at,
     }
     (DOCS_DIR / "stats.json").write_text(json.dumps(stats))
     log.info("Written docs/stats.json")
-
-    # ── README update ─────────────────────────────────────────────────────
-    readme_path = Path("README.md")
-    if readme_path.exists():
-        readme_content  = readme_path.read_text(encoding="utf-8")
-        marker          = "Total workers from last run:"
-        replacement_line = f"Total workers from last run: {total_workers}\n"
-        if marker in readme_content:
-            readme_content = re.sub(
-                r"Total workers from last run: \d+\n",
-                replacement_line,
-                readme_content,
-                count=1,
-            )
-        else:
-            readme_content = re.sub(
-                r"(```\n\nWorkers are stateless)",
-                f"```\n\n{replacement_line}\nWorkers are stateless",
-                readme_content,
-                count=1,
-            )
-        readme_path.write_text(readme_content, encoding="utf-8")
-        log.info("Updated README.md with total workers: %d", total_workers)
 
 
 if __name__ == "__main__":

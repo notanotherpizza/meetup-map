@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "marimo-notebook",
+      "runtimeExecutable": ".venv/bin/marimo",
+      "runtimeArgs": ["edit", "batch-worker/iceberg batch.py", "--no-token"],
+      "port": 2718,
+      "autoPort": true
+    },
+    {
+      "name": "docs-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8080", "--directory", "docs"],
+      "port": 8080
+    }
+  ]
+}

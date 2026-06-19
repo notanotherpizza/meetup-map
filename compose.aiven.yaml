@@ -1,90 +1,66 @@
-version: "3.8"
+x-lakekeeper-env: &lakekeeper-env
+  LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_ENCRYPTION_KEY}
+  LAKEKEEPER__PG_DATABASE_URL_READ: ${LAKEKEEPER_PG_URL}
+  LAKEKEEPER__PG_DATABASE_URL_WRITE: ${LAKEKEEPER_PG_URL}
+  LAKEKEEPER__AUTHZ_BACKEND: allowall
+  LAKEKEEPER__BASE_URI: ${LAKEKEEPER_BASE_URI}
 
-x-discovery-env: &discovery-env
-  APP_MODE: discovery
-  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-  KAFKA_SSL_CA: ${KAFKA_SSL_CA}
-  KAFKA_SSL_CERT: ${KAFKA_SSL_CERT}
-  KAFKA_SSL_KEY: ${KAFKA_SSL_KEY}
-
-x-worker-env: &worker-env
-  APP_MODE: worker
-  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-  KAFKA_SSL_CA: ${KAFKA_SSL_CA}
-  KAFKA_SSL_CERT: ${KAFKA_SSL_CERT}
-  KAFKA_SSL_KEY: ${KAFKA_SSL_KEY}
-  TOPIC_GROUPS_TO_SCRAPE: groups-to-scrape
-  TOPIC_GROUPS_RAW: groups-raw
-  TOPIC_EVENTS_RAW: events-raw
-  TOPIC_VENUES_RAW: venues-raw
-  MAX_EVENTS_PER_GROUP: "50"
+x-common-env: &common-env
+  R2_ENDPOINT_URL: ${R2_ENDPOINT_URL}
+  R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+  R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+  LAKEKEEPER_CATALOG_URI: ${LAKEKEEPER_CATALOG_URI}
   REQUEST_DELAY_SECONDS: "1.5"
-
-x-sink-env: &sink-env
-  APP_MODE: sink
-  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-  KAFKA_SSL_CA: ${KAFKA_SSL_CA}
-  KAFKA_SSL_CERT: ${KAFKA_SSL_CERT}
-  KAFKA_SSL_KEY: ${KAFKA_SSL_KEY}
-  POSTGRES_URI: ${POSTGRES_URI}
-  TOPIC_GROUPS_RAW: groups-raw
-  TOPIC_EVENTS_RAW: events-raw
-  TOPIC_VENUES_RAW: venues-raw
+  MAX_EVENTS_PER_GROUP: "0"
 
 services:
-  # Discovery workers - search Meetup/Luma APIs for groups
-  discovery-1:
-    build: .
+  # ── Lakekeeper DB migration (runs once on deploy) ───────────────────────────
+  lakekeeper-migrate:
+    image: quay.io/lakekeeper/catalog:latest-main
     environment:
-      <<: *discovery-env
-      WORKER_ID: discovery-1
+      <<: *lakekeeper-env
+    command: ["migrate"]
+    restart: "no"
 
-  discovery-2:
-    build: .
+  # ── Lakekeeper REST catalog ─────────────────────────────────────────────────
+  lakekeeper:
+    image: quay.io/lakekeeper/catalog:latest-main
     environment:
-      <<: *discovery-env
-      WORKER_ID: discovery-2
+      <<: *lakekeeper-env
+    command: ["serve"]
+    ports:
+      - "8181:8181"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
-  discovery-3:
-    build: .
+  # ── Daily batch worker ──────────────────────────────────────────────────────
+  # Discovers new pro groups + scrapes all known groups.
+  # Run once per day via Aiven Apps scheduled invocation or external cron.
+  batch:
+    image: ghcr.io/notanotherpizza/meetup-map-batch:latest
     environment:
-      <<: *discovery-env
-      WORKER_ID: discovery-3
+      <<: *common-env
+      APP_MODE: batch
+    restart: "no"
 
-  # Scrape workers - fetch group details and events
-  worker-1:
-    build: .
+  # ── Download / search API ───────────────────────────────────────────────────
+  # Always-on FastAPI + DuckDB service.
+  # Exposes /groups /events /venues /search /stats
+  download:
+    image: ghcr.io/notanotherpizza/meetup-map-download:latest
     environment:
-      <<: *worker-env
-      WORKER_ID: worker-1
-
-  worker-2:
-    build: .
-    environment:
-      <<: *worker-env
-      WORKER_ID: worker-2
-
-  worker-3:
-    build: .
-    environment:
-      <<: *worker-env
-      WORKER_ID: worker-3
-
-  # Sink workers - write to Postgres
-  sink-1:
-    build: .
-    environment:
-      <<: *sink-env
-      SINK_ID: sink-1
-
-  sink-2:
-    build: .
-    environment:
-      <<: *sink-env
-      SINK_ID: sink-2
-
-  sink-3:
-    build: .
-    environment:
-      <<: *sink-env
-      SINK_ID: sink-3
+      <<: *common-env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/stats')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

@@ -1,31 +1,30 @@
 """
 worker/scraper.py
 ─────────────────
-Stateless worker: consumes GroupSeed messages from Kafka, routes each seed
-to the appropriate platform scraper, and publishes GroupRaw + VenueRaw +
-EventRaw messages.
+Reads GroupSeed records from a flat file (one URL per line), scrapes each
+group via the appropriate platform handler, and writes GroupRaw + VenueRaw +
+EventRaw records directly to Iceberg tables on R2 via Lakekeeper.
 
-No Postgres dependency — all geocoding and persistence handled by the sink.
-
-Platform routing:
-  - seed.platform == "meetup" → worker.platforms.meetup.MeetupPlatform
-  - seed.platform == "luma"   → worker.platforms.luma.LumaPlatform
+Replaces the previous Kafka-based pipeline. No Kafka or Postgres dependency.
 
 Usage:
-    python -m worker.scraper
+    python -m worker.scraper                          # scrape community/groups.txt
+    python -m worker.scraper --input path/to/urls.txt
+    python -m worker.scraper --limit 100              # stop after N groups
 """
+import argparse
 import asyncio
 import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 import httpx
-from shared.kafka_client import make_consumer, make_producer, publish
+
+from shared.iceberg import make_catalog, get_tables, write_result
 from shared.models import GroupSeed
 from shared.settings import Settings
-from worker.platforms.base import ScrapeResult
-from worker.platforms.luma import LumaPlatform
 from worker.platforms.meetup import MeetupPlatform
 
 logging.basicConfig(
@@ -34,153 +33,113 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-PLATFORMS = [
-    MeetupPlatform(),
-    LumaPlatform(),
-]
+WORKER_ID = os.environ.get("WORKER_ID", __import__("socket").gethostname())
+CHECKPOINT_FILE = Path(".scraper-checkpoint.json")
+PLATFORM = MeetupPlatform()
 
 
-def get_platform(seed: GroupSeed):
-    """Return the first platform that can handle this seed's URL."""
-    # Prefer explicit platform field, fall back to URL sniffing
-    if seed.platform == "luma":
-        return LumaPlatform()
-    if seed.platform == "meetup":
-        return MeetupPlatform()
-    # Fallback: sniff from URL
-    for p in PLATFORMS:
-        if p.can_handle(seed.group_url):
-            return p
-    raise ValueError(
-        f"No platform handler for seed {seed.group_urlname!r} "
-        f"(platform={seed.platform!r}, url={seed.group_url!r})"
+def load_urls(path: Path) -> list[str]:
+    urls = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "meetup.com/" in line:
+            urls.append(line)
+    return urls
+
+
+def load_checkpoint() -> set[str]:
+    if CHECKPOINT_FILE.exists():
+        return set(json.loads(CHECKPOINT_FILE.read_text()))
+    return set()
+
+
+def save_checkpoint(done: set[str]) -> None:
+    CHECKPOINT_FILE.write_text(json.dumps(list(done)))
+
+
+def url_to_seed(url: str, settings: Settings) -> GroupSeed:
+    from datetime import datetime, timezone
+    urlname = url.rstrip("/").split("meetup.com/")[-1].split("/")[0]
+    return GroupSeed(
+        group_urlname=urlname,
+        group_url=url,
+        pro_network="meetup",
+        seeded_at=datetime.now(timezone.utc),
+        platform="meetup",
     )
 
 
-def publish_result(
-    result: ScrapeResult,
-    producer,
-    settings: Settings,
-) -> None:
-    """Publish a ScrapeResult to the appropriate Kafka topics."""
-    # Group
-    publish(
-        producer,
-        topic=settings.topic_groups_raw,
-        value=result.group.model_dump(mode="json"),
-        key=result.group.group_urlname,
-    )
-
-    # Venues (deduplicated by caller — each venue published once)
-    for venue in result.venues:
-        publish(
-            producer,
-            topic=settings.topic_venues_raw,
-            value=venue.model_dump(mode="json"),
-            key=venue.venue_id,
-        )
-
-    # Events
-    for event in result.past_events + result.upcoming_events:
-        publish(
-            producer,
-            topic=settings.topic_events_raw,
-            value=event.model_dump(mode="json"),
-            key=f"{result.group.group_urlname}:{event.event_id}",
-        )
-
-    log.info(
-        "  -> Published 1 group + %d venues + %d events for %s",
-        len(result.venues),
-        len(result.past_events) + len(result.upcoming_events),
-        result.group.group_urlname,
-    )
-
-
-async def process_seed(
-    seed: GroupSeed,
-    producer,
+async def scrape_one(
+    url: str,
     settings: Settings,
     http_client: httpx.AsyncClient,
-    browser,
 ) -> None:
-    log.info("Processing: %s (platform=%s)", seed.group_urlname, seed.platform)
-
-    worker_id = os.environ.get("WORKER_ID", __import__("socket").gethostname())
-    platform = get_platform(seed)
-
+    seed = url_to_seed(url, settings)
     try:
-        result = await platform.scrape(
+        result = await PLATFORM.scrape(
             seed=seed,
-            browser=browser,
             http_client=http_client,
             max_past_events=settings.max_events_per_group,
-            worker_id=worker_id,
+            worker_id=WORKER_ID,
         )
-        publish_result(result, producer, settings)
-        producer.flush(timeout=10)
+        return result
     except Exception as exc:
-        log.error("Failed to process %s: %s", seed.group_urlname, exc, exc_info=True)
+        log.error("Failed to scrape %s: %s", seed.group_urlname, exc)
+        return None
 
 
-async def run(settings: Settings) -> None:
-    consumer = make_consumer(
-        settings,
-        group_id="meetupmap-workers",
-        topics=[settings.topic_groups_to_scrape],
+async def run(input_path: Path, settings: Settings, limit: int | None) -> None:
+    urls = load_urls(input_path)
+    done = load_checkpoint()
+
+    pending = [u for u in urls if u not in done]
+    if limit:
+        pending = pending[:limit]
+
+    log.info(
+        "Loaded %d URLs, %d already done, %d to scrape",
+        len(urls), len(done), len(pending),
     )
-    producer = make_producer(settings)
-    log.info("Worker started. Listening on '%s'...", settings.topic_groups_to_scrape)
 
-    drain_mode = os.environ.get("DRAIN_MODE", "").lower() == "true"
-    empty_polls = 0
-    empty_polls_needed = 3
+    catalog = make_catalog(settings)
+    groups_table, events_table, venues_table = get_tables(catalog)
 
     async with httpx.AsyncClient(timeout=30) as http_client:
-        try:
-            while True:
-                msg = consumer.poll(timeout=5.0)
-                if msg is None:
-                    if drain_mode:
-                        empty_polls += 1
-                        log.info(
-                            "No messages (%d/%d)...",
-                            empty_polls, empty_polls_needed,
-                        )
-                        if empty_polls >= empty_polls_needed:
-                            log.info("Topic drained — exiting.")
-                            break
-                    continue
+        for i, url in enumerate(pending, 1):
+            log.info("[%d/%d] %s", i, len(pending), url)
+            result = await scrape_one(url, settings, http_client)
+            if result:
+                write_result(result, groups_table, events_table, venues_table)
+                done.add(url)
+                save_checkpoint(done)
+                log.info(
+                    "  -> %s | %d events | %d venues",
+                    result.group.name,
+                    len(result.past_events) + len(result.upcoming_events),
+                    len(result.venues),
+                )
+            await asyncio.sleep(settings.request_delay_seconds)
 
-                empty_polls = 0
-
-                if msg.error():
-                    log.error("Kafka error: %s", msg.error())
-                    continue
-
-                try:
-                    seed = GroupSeed(**json.loads(msg.value()))
-                    await process_seed(
-                        seed, producer, settings, http_client, None
-                    )
-                    consumer.commit(msg)
-                    await asyncio.sleep(settings.request_delay_seconds)
-                except Exception as exc:
-                    log.error(
-                        "Failed to process %s: %s",
-                        msg.key(), exc, exc_info=True,
-                    )
-        except KeyboardInterrupt:
-            log.info("Shutting down...")
-        finally:
-            consumer.close()
+    log.info("Done. Scraped %d groups.", len(pending))
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Scrape Meetup groups to Iceberg on R2")
+    parser.add_argument(
+        "--input", default="community/groups.txt",
+        help="File of group URLs to scrape (default: community/groups.txt)",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Stop after N groups (useful for testing)",
+    )
+    args = parser.parse_args()
+
     settings = Settings()
     try:
-        asyncio.run(run(settings))
+        asyncio.run(run(Path(args.input), settings, args.limit))
     except KeyboardInterrupt:
+        log.info("Interrupted.")
         sys.exit(0)
 
 

@@ -95,5 +95,6 @@ class EventRaw(BaseModel):
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
     rsvp_count: Optional[int] = None
+    description: Optional[str] = None
     scraped_at: datetime
     scrape_method: str

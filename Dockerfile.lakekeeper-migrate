@@ -4,5 +4,4 @@ USER root
 COPY --from=shell /bin/busybox /bin/sh
 COPY --chmod=755 lakekeeper-entrypoint.sh /entrypoint.sh
 USER nonroot
-ENTRYPOINT ["/bin/sh", "/entrypoint.sh"]
-CMD ["migrate"]
+ENTRYPOINT ["/bin/sh", "/entrypoint.sh", "migrate"]

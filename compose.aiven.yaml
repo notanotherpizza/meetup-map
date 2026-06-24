@@ -18,10 +18,9 @@ services:
   lakekeeper-migrate:
     build:
       context: .
-      dockerfile: Dockerfile.lakekeeper
+      dockerfile: Dockerfile.lakekeeper-migrate
     environment:
       <<: *lakekeeper-env
-    command: ["migrate"]
     restart: "no"
 
   # ── Lakekeeper REST catalog ─────────────────────────────────────────────────
@@ -31,7 +30,6 @@ services:
       dockerfile: Dockerfile.lakekeeper
     environment:
       <<: *lakekeeper-env
-    command: ["serve"]
     ports:
       - "8181:8181"
     restart: unless-stopped

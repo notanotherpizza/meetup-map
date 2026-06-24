@@ -1,2 +1,7 @@
 FROM quay.io/lakekeeper/catalog:latest-main
+COPY lakekeeper-entrypoint.sh /entrypoint.sh
+USER root
+RUN chmod +x /entrypoint.sh
+USER nonroot
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["migrate"]

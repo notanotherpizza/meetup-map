@@ -144,7 +144,7 @@ git push
 cp .env.example .env
 
 # Start Lakekeeper + local Postgres
-docker compose up lakekeeper catalog-db -d
+docker compose -f compose.local.yaml up lakekeeper catalog-db -d
 
 # Bootstrap (first time only)
 curl -X POST http://localhost:8181/management/v1/bootstrap \

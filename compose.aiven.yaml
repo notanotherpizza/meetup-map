@@ -16,7 +16,9 @@ x-common-env: &common-env
 services:
   # ── Lakekeeper DB migration (runs once on deploy) ───────────────────────────
   lakekeeper-migrate:
-    image: quay.io/lakekeeper/catalog:latest-main
+    build:
+      context: .
+      dockerfile: Dockerfile.lakekeeper
     environment:
       <<: *lakekeeper-env
     command: ["migrate"]
@@ -24,7 +26,9 @@ services:
 
   # ── Lakekeeper REST catalog ─────────────────────────────────────────────────
   lakekeeper:
-    image: quay.io/lakekeeper/catalog:latest-main
+    build:
+      context: .
+      dockerfile: Dockerfile.lakekeeper
     environment:
       <<: *lakekeeper-env
     command: ["serve"]
@@ -39,20 +43,20 @@ services:
       start_period: 10s
 
   # ── Daily batch worker ──────────────────────────────────────────────────────
-  # Discovers new pro groups + scrapes all known groups.
-  # Run once per day via Aiven Apps scheduled invocation or external cron.
   batch:
-    image: ghcr.io/notanotherpizza/meetup-map-batch:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       <<: *common-env
       APP_MODE: batch
     restart: "no"
 
   # ── Download / search API ───────────────────────────────────────────────────
-  # Always-on FastAPI + DuckDB service.
-  # Exposes /groups /events /venues /search /stats
   download:
-    image: ghcr.io/notanotherpizza/meetup-map-download:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.download
     environment:
       <<: *common-env
     ports:

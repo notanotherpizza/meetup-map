@@ -1,7 +1,0 @@
-FROM busybox:stable-musl AS shell
-FROM quay.io/lakekeeper/catalog:latest-main
-USER root
-COPY --from=shell /bin/busybox /bin/sh
-COPY --chmod=755 lakekeeper-entrypoint.sh /entrypoint.sh
-USER nonroot
-ENTRYPOINT ["/bin/sh", "/entrypoint.sh", "migrate"]

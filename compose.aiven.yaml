@@ -1,24 +1,4 @@
 services:
-  lakekeeper-migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile.lakekeeper-migrate
-    restart: "no"
-
-  lakekeeper:
-    build:
-      context: .
-      dockerfile: Dockerfile.lakekeeper
-    ports:
-      - "8181:8181"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
   batch:
     build:
       context: .

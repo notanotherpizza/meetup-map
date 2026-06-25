@@ -83,11 +83,11 @@ _VENUES_PARTITION = PartitionSpec(
 
 def make_catalog(settings: Settings) -> RestCatalog:
     return load_catalog(
-        "lakekeeper",
+        "r2-catalog",
         **{
             "type": "rest",
-            "uri": settings.lakekeeper_catalog_uri,
-            "warehouse": "meetup-map",
+            "uri": settings.catalog_uri,
+            "token": settings.catalog_token,
             "s3.endpoint": settings.r2_endpoint_url,
             "s3.access-key-id": settings.r2_access_key_id,
             "s3.secret-access-key": settings.r2_secret_access_key,

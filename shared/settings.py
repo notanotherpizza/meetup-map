@@ -13,8 +13,9 @@ class Settings(BaseSettings):
     r2_access_key_id: str
     r2_secret_access_key: str
 
-    # Lakekeeper catalog
-    lakekeeper_catalog_uri: str
+    # Iceberg REST catalog (Cloudflare R2 Data Catalog)
+    catalog_uri: str
+    catalog_token: str
 
     # Scraping
     max_events_per_group: int = 50

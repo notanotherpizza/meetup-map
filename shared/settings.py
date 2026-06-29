@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # Iceberg REST catalog (Cloudflare R2 Data Catalog)
     catalog_uri: str
     catalog_token: str
+    catalog_warehouse: str = "meetup-map-2"
 
     # Scraping
     max_events_per_group: int = 50

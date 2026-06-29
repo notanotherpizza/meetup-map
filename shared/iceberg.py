@@ -88,6 +88,7 @@ def make_catalog(settings: Settings) -> RestCatalog:
             "type": "rest",
             "uri": settings.catalog_uri,
             "token": settings.catalog_token,
+            "warehouse": settings.catalog_warehouse,
             "s3.endpoint": settings.r2_endpoint_url,
             "s3.access-key-id": settings.r2_access_key_id,
             "s3.secret-access-key": settings.r2_secret_access_key,

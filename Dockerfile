@@ -10,4 +10,5 @@ COPY batch_worker/ batch_worker/
 RUN pip install ".[download]"
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
+ENV APP_MODE=batch
 ENTRYPOINT ["./entrypoint.sh"]

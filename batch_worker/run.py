@@ -1,5 +1,5 @@
 """
-batch-worker/run.py
+batch_worker/run.py
 ────────────────────
 Daily batch runner. Orchestrates:
   1. Discovery  — find new Meetup Pro groups via keyword × city grid
@@ -11,10 +11,10 @@ deduplicates against existing URLs, and the scraper checkpoints progress so an
 interrupted run resumes where it left off.
 
 Usage:
-    python -m batch-worker.run
-    python -m batch-worker.run --discover-only   # just run discovery, don't scrape
-    python -m batch-worker.run --scrape-only     # skip discovery, just scrape
-    python -m batch-worker.run --limit 50        # scrape at most N groups (for testing)
+    python -m batch_worker.run
+    python -m batch_worker.run --discover-only   # just run discovery, don't scrape
+    python -m batch_worker.run --scrape-only     # skip discovery, just scrape
+    python -m batch_worker.run --limit 50        # scrape at most N groups (for testing)
 """
 import argparse
 import asyncio

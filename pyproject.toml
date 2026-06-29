@@ -36,12 +36,12 @@ dev = [
 ]
 
 [project.scripts]
-meetupmap-batch    = "batch-worker.run:entrypoint"
+meetupmap-batch    = "batch_worker.run:entrypoint"
 meetupmap-worker   = "worker.scraper:main"
 meetupmap-download = "download_service.serve:main"
 
 [tool.setuptools.packages.find]
-include = ["worker*", "shared*", "map*", "community*", "batch-worker*", "download_service*"]
+include = ["worker*", "shared*", "map*", "community*", "batch_worker*", "download_service*"]
 
 [tool.ruff]
 line-length = 100

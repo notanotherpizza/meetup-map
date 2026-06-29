@@ -6,7 +6,7 @@ COPY shared/ shared/
 COPY worker/ worker/
 COPY map/ map/
 COPY community/ community/
-COPY batch-worker/ batch-worker/
+COPY batch_worker/ batch_worker/
 RUN pip install ".[download]"
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh

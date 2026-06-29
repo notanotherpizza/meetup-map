@@ -104,15 +104,18 @@ def _load_iceberg() -> duckdb.DuckDBPyConnection:
     return conn
 
 
-def get_conn() -> duckdb.DuckDBPyConnection:
+def get_conn() -> duckdb.DuckDBPyConnection | None:
     global _conn, _last_load
     now = datetime.now(timezone.utc)
     with _db_lock:
         if _conn is None or (
             _last_load and (now - _last_load).total_seconds() > _REFRESH_INTERVAL_S
         ):
-            _conn = _load_iceberg()
-            _last_load = now
+            try:
+                _conn = _load_iceberg()
+                _last_load = now
+            except Exception as e:
+                log.error("Failed to load Iceberg data: %s", e)
     return _conn
 
 
@@ -185,6 +188,8 @@ def root():
 @app.get("/stats")
 def stats():
     conn = get_conn()
+    if conn is None:
+        return {"status": "loading", "message": "Data not yet available — batch scrape in progress"}
     row = conn.execute("""
         SELECT
             (SELECT COUNT(*) FROM groups) AS total_groups,
@@ -216,7 +221,9 @@ def get_groups(
     limit:     int        = Query(0, ge=0, description="Max rows (0 = all)"),
     fmt:       str        = Query("json", alias="format", description="json|csv|parquet"),
 ):
-    conn  = get_conn()
+    conn = get_conn()
+    if conn is None:
+        raise HTTPException(503, "Data not yet available — batch scrape in progress")
     where = []
     date_clause = _apply_date_filter("groups", "scraped_at", from_date, to_date)
     if date_clause:
@@ -251,7 +258,9 @@ def get_events(
     limit:        int        = Query(0, ge=0),
     fmt:          str        = Query("json", alias="format"),
 ):
-    conn  = get_conn()
+    conn = get_conn()
+    if conn is None:
+        raise HTTPException(503, "Data not yet available — batch scrape in progress")
     where = []
     date_clause = _apply_date_filter("events", "starts_at", from_date, to_date)
     if date_clause:
@@ -289,7 +298,9 @@ def get_venues(
     limit:     int        = Query(0, ge=0),
     fmt:       str        = Query("json", alias="format"),
 ):
-    conn  = get_conn()
+    conn = get_conn()
+    if conn is None:
+        raise HTTPException(503, "Data not yet available — batch scrape in progress")
     where = []
     date_clause = _apply_date_filter("venues", "scraped_at", from_date, to_date)
     if date_clause:
@@ -318,6 +329,8 @@ def search(
     Returns lightweight JSON for powering the search page.
     """
     conn = get_conn()
+    if conn is None:
+        raise HTTPException(503, "Data not yet available — batch scrape in progress")
     results = {"groups": [], "events": []}
 
     if type in ("groups", "both"):

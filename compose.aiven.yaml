@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      APP_MODE: batch
+      APP_MODE: batch-scrape-only
       REQUEST_DELAY_SECONDS: "1.5"
       MAX_EVENTS_PER_GROUP: "0"
     restart: "no"

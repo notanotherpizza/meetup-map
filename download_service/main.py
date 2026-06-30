@@ -16,6 +16,7 @@ Usage:
 Env: same as scraper — R2_* + LAKEKEEPER_* vars.
 """
 import io
+import json
 import logging
 import threading
 import time
@@ -162,10 +163,11 @@ def _respond(arrow_table: pa.Table | pa.RecordBatchReader, fmt: str, filename: s
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{filename}.csv"'},
         )
-    # JSON (default)
+    # JSON (default) — use to_json so NaN float values become null
     tmp = duckdb.connect(":memory:")
     tmp.register("t", arrow_table)
-    rows = tmp.execute("SELECT * FROM t").fetchdf().to_dict(orient="records")
+    df = tmp.execute("SELECT * FROM t").fetchdf()
+    rows = json.loads(df.to_json(orient="records"))
     return {"data": rows, "count": len(rows)}
 
 

@@ -82,9 +82,8 @@ _VENUES_PARTITION = PartitionSpec(
 
 
 def make_catalog(settings: Settings) -> RestCatalog:
-    # R2 Data Catalog enforces that all table data lives under __r2_data_catalog/.
-    # Direct S3 access to that prefix is blocked; the catalog vends signed credentials
-    # via the REST token (remote signing). Do not pass raw R2 keys here.
+    # R2 Data Catalog uses credential vending — it issues short-lived S3 credentials
+    # to the client. Do not pass s3.* params; they conflict with vended credentials.
     return load_catalog(
         "r2-catalog",
         **{
@@ -92,10 +91,6 @@ def make_catalog(settings: Settings) -> RestCatalog:
             "uri": settings.catalog_uri,
             "token": settings.catalog_token,
             "warehouse": settings.catalog_warehouse,
-            "s3.endpoint": settings.r2_endpoint_url,
-            "s3.region": "auto",
-            "s3.remote-signing-enabled": "true",
-            "py-io-impl": "pyiceberg.io.pyarrow.PyArrowFileIO",
         },
     )
 

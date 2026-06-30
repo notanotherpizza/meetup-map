@@ -82,6 +82,9 @@ _VENUES_PARTITION = PartitionSpec(
 
 
 def make_catalog(settings: Settings) -> RestCatalog:
+    # R2 Data Catalog enforces that all table data lives under __r2_data_catalog/.
+    # Direct S3 access to that prefix is blocked; the catalog vends signed credentials
+    # via the REST token (remote signing). Do not pass raw R2 keys here.
     return load_catalog(
         "r2-catalog",
         **{
@@ -90,30 +93,24 @@ def make_catalog(settings: Settings) -> RestCatalog:
             "token": settings.catalog_token,
             "warehouse": settings.catalog_warehouse,
             "s3.endpoint": settings.r2_endpoint_url,
-            "s3.access-key-id": settings.r2_access_key_id,
-            "s3.secret-access-key": settings.r2_secret_access_key,
             "s3.region": "auto",
-            "s3.remote-signing-enabled": "false",
+            "s3.remote-signing-enabled": "true",
             "py-io-impl": "pyiceberg.io.pyarrow.PyArrowFileIO",
         },
     )
 
 
-def get_tables(catalog: RestCatalog, bucket: str = "meetup-map-2"):
+def get_tables(catalog: RestCatalog):
     """Return (groups_table, events_table, venues_table), creating if needed."""
     catalog.create_namespace_if_not_exists("meetupmap")
-    base = f"s3://{bucket}/data"
     groups = catalog.create_table_if_not_exists(
-        "meetupmap.groups", schema=GROUPS_SCHEMA, partition_spec=_GROUPS_PARTITION,
-        location=f"{base}/groups",
+        "meetupmap.groups", schema=GROUPS_SCHEMA, partition_spec=_GROUPS_PARTITION
     )
     events = catalog.create_table_if_not_exists(
-        "meetupmap.events", schema=EVENTS_SCHEMA, partition_spec=_EVENTS_PARTITION,
-        location=f"{base}/events",
+        "meetupmap.events", schema=EVENTS_SCHEMA, partition_spec=_EVENTS_PARTITION
     )
     venues = catalog.create_table_if_not_exists(
-        "meetupmap.venues", schema=VENUES_SCHEMA, partition_spec=_VENUES_PARTITION,
-        location=f"{base}/venues",
+        "meetupmap.venues", schema=VENUES_SCHEMA, partition_spec=_VENUES_PARTITION
     )
     return groups, events, venues
 

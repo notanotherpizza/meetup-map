@@ -140,7 +140,9 @@ def _apply_date_filter(table: str, col: str, from_date: str | None, to_date: str
     return ""
 
 
-def _respond(arrow_table: pa.Table, fmt: str, filename: str) -> Response:
+def _respond(arrow_table: pa.Table | pa.RecordBatchReader, fmt: str, filename: str) -> Response:
+    if isinstance(arrow_table, pa.RecordBatchReader):
+        arrow_table = arrow_table.read_all()
     if fmt == "parquet":
         buf = io.BytesIO()
         pq.write_table(arrow_table, buf)
@@ -314,10 +316,7 @@ def get_venues(
     sql += " ORDER BY scraped_at DESC"
     if limit:
         sql += f" LIMIT {limit}"
-    try:
-        arrow = conn.execute(sql).arrow()
-    except Exception as e:
-        raise HTTPException(500, detail=f"venues query failed: {e}")
+    arrow = conn.execute(sql).arrow()
     return _respond(arrow, fmt, "meetupmap_venues")
 
 

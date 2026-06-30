@@ -26,6 +26,7 @@ dependencies = [
 # pip install ".[download]" — for Dockerfile.download
 download = [
     "duckdb>=1.1",
+    "pytz>=2024.1",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.29",
 ]

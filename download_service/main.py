@@ -314,7 +314,10 @@ def get_venues(
     sql += " ORDER BY scraped_at DESC"
     if limit:
         sql += f" LIMIT {limit}"
-    arrow = conn.execute(sql).arrow()
+    try:
+        arrow = conn.execute(sql).arrow()
+    except Exception as e:
+        raise HTTPException(500, detail=f"venues query failed: {e}")
     return _respond(arrow, fmt, "meetupmap_venues")
 
 

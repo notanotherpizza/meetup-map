@@ -99,17 +99,21 @@ def make_catalog(settings: Settings) -> RestCatalog:
     )
 
 
-def get_tables(catalog: RestCatalog):
+def get_tables(catalog: RestCatalog, bucket: str = "meetup-map-2"):
     """Return (groups_table, events_table, venues_table), creating if needed."""
     catalog.create_namespace_if_not_exists("meetupmap")
+    base = f"s3://{bucket}/data"
     groups = catalog.create_table_if_not_exists(
-        "meetupmap.groups", schema=GROUPS_SCHEMA, partition_spec=_GROUPS_PARTITION
+        "meetupmap.groups", schema=GROUPS_SCHEMA, partition_spec=_GROUPS_PARTITION,
+        location=f"{base}/groups",
     )
     events = catalog.create_table_if_not_exists(
-        "meetupmap.events", schema=EVENTS_SCHEMA, partition_spec=_EVENTS_PARTITION
+        "meetupmap.events", schema=EVENTS_SCHEMA, partition_spec=_EVENTS_PARTITION,
+        location=f"{base}/events",
     )
     venues = catalog.create_table_if_not_exists(
-        "meetupmap.venues", schema=VENUES_SCHEMA, partition_spec=_VENUES_PARTITION
+        "meetupmap.venues", schema=VENUES_SCHEMA, partition_spec=_VENUES_PARTITION,
+        location=f"{base}/venues",
     )
     return groups, events, venues
 

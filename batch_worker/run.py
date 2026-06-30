@@ -135,7 +135,15 @@ async def run_scrape(settings: Settings, limit: int | None) -> None:
                     max_past_events=settings.max_events_per_group,
                     worker_id=WORKER_ID,
                 )
-                write_result(result, groups_table, events_table, venues_table)
+                for attempt in range(5):
+                    try:
+                        write_result(result, groups_table, events_table, venues_table)
+                        break
+                    except Exception as write_exc:
+                        if attempt == 4:
+                            raise
+                        log.warning("Write conflict, refreshing tables (attempt %d): %s", attempt + 1, write_exc)
+                        groups_table, events_table, venues_table = get_tables(catalog)
                 done.add(url)
                 save_checkpoint(done)
                 log.info(

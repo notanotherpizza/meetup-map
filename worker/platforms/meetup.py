@@ -70,7 +70,7 @@ query getPastGroupEvents($urlname: String!, $beforeDateTime: DateTime, $after: S
         node {
           id title eventUrl dateTime endTime isOnline
           going { totalCount }
-          venue { id name address city state country }
+          venue { id name address city state country lat lon }
         }
       }
     }
@@ -89,7 +89,7 @@ query getUpcomingGroupEvents($urlname: String!, $afterDateTime: DateTime) {
         node {
           id title eventUrl dateTime endTime isOnline
           going { totalCount }
-          venue { id name address city state country }
+          venue { id name address city state country lat lon }
         }
       }
     }
@@ -353,6 +353,8 @@ class MeetupPlatform(Platform):
         venue_id = str(venue.get("id", "")).strip()
         if not venue_id:
             return None
+        lat = venue.get("lat")
+        lon = venue.get("lon")
         return VenueRaw(
             venue_id=venue_id,
             name=venue.get("name") or None,
@@ -360,6 +362,8 @@ class MeetupPlatform(Platform):
             city=venue.get("city") or None,
             state=venue.get("state") or None,
             country=venue.get("country") or None,
+            lat=float(lat) if lat is not None else None,
+            lon=float(lon) if lon is not None else None,
             scraped_at=now,
         )
 

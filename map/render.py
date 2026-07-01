@@ -11,6 +11,7 @@ Usage:
 import json
 import logging
 import hashlib
+import os
 import colorsys
 import shutil
 import time
@@ -778,8 +779,10 @@ def main() -> None:
     if template_path.exists():
         # Index template now lazy-loads groups/events/networks from data/*.json
         # so we only inject __NETWORKS__ (small) for fast sidebar rendering
+        download_api = os.environ.get("DOWNLOAD_API", "")
         filled = (template_path.read_text(encoding="utf-8")
-            .replace("__NETWORKS__", networks_json))
+            .replace("__NETWORKS__", networks_json)
+            .replace("__DOWNLOAD_API__", download_api))
         index_out = DOCS_DIR / "index.html"
         index_out.write_text(filled, encoding="utf-8")
         log.info("Written %s (%.1f KB)", index_out, len(filled) / 1024)

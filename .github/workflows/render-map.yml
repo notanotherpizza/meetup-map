@@ -31,10 +31,13 @@ jobs:
 
       - name: Render map
         env:
-          R2_ENDPOINT_URL:        ${{ secrets.R2_ENDPOINT_URL }}
-          R2_ACCESS_KEY_ID:       ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY:   ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          LAKEKEEPER_CATALOG_URI: ${{ secrets.LAKEKEEPER_CATALOG_URI }}
+          R2_ENDPOINT_URL:      ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CATALOG_URI:          ${{ secrets.CATALOG_URI }}
+          CATALOG_TOKEN:        ${{ secrets.CATALOG_TOKEN }}
+          CATALOG_WAREHOUSE:    ${{ secrets.CATALOG_WAREHOUSE }}
+          DOWNLOAD_API:         ${{ secrets.DOWNLOAD_API }}
         run: python -m map.render
 
       - name: Commit map

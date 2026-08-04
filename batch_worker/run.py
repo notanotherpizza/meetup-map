@@ -4,7 +4,7 @@ batch_worker/run.py
 Daily batch runner. Orchestrates:
   1. Discovery  — find new Meetup Pro groups via keyword × city grid
   2. Merge      — append newly discovered URLs to community/groups.txt
-  3. Scrape     — scrape all groups and write to Iceberg on R2
+  3. Scrape     — scrape all groups and upsert into Postgres
 
 Designed to run as a daily cron job on Aiven Apps. Safe to re-run: discovery
 deduplicates against existing URLs, and the scraper checkpoints progress so an
@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 
 from community.discover_meetup import discover as run_discovery
-from shared.iceberg import make_catalog, get_tables, write_result
+from shared.db import connect, write_result
 from shared.models import GroupSeed
 from shared.settings import Settings
 from worker.scraper import load_urls, load_checkpoint, save_checkpoint, url_to_seed, WORKER_ID
@@ -121,8 +121,7 @@ async def run_scrape(settings: Settings, limit: int | None) -> None:
         log.info("Nothing to scrape.")
         return
 
-    catalog = make_catalog(settings)
-    groups_table, events_table, venues_table = get_tables(catalog)
+    conn = connect(settings)
 
     async with httpx.AsyncClient(timeout=30) as http_client:
         for i, url in enumerate(pending, 1):
@@ -135,15 +134,7 @@ async def run_scrape(settings: Settings, limit: int | None) -> None:
                     max_past_events=settings.max_events_per_group,
                     worker_id=WORKER_ID,
                 )
-                for attempt in range(5):
-                    try:
-                        write_result(result, groups_table, events_table, venues_table)
-                        break
-                    except Exception as write_exc:
-                        if attempt == 4:
-                            raise
-                        log.warning("Write conflict, refreshing tables (attempt %d): %s", attempt + 1, write_exc)
-                        groups_table, events_table, venues_table = get_tables(catalog)
+                write_result(conn, result)
                 done.add(url)
                 save_checkpoint(done)
                 log.info(

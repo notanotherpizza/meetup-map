@@ -3,6 +3,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml .
 COPY shared/ shared/
+COPY infra/postgres/schema.sql infra/postgres/schema.sql
 COPY worker/ worker/
 COPY map/ map/
 COPY community/ community/

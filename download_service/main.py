@@ -3,24 +3,23 @@ download-service/main.py
 ────────────────────────
 FastAPI + DuckDB service for querying and downloading meetup-map data.
 
-On startup:
-  - Reads groups, events, venues from Iceberg (via pyiceberg)
-  - Registers them as in-memory DuckDB tables
-  - Exposes REST endpoints for search, filtering, and bulk download
+DuckDB attaches directly to Postgres (via the postgres scanner extension) and
+queries it live — no copy step, no cache-refresh interval. groups/events/venues
+are plain views over the attached tables since Postgres already stores one
+current-state row per id (upserted by the scraper), so no dedup is needed.
 
+Exposes REST endpoints for search, filtering, and bulk download.
 Supports output formats: json (default), csv, parquet
 
 Usage:
     uvicorn download_service.main:app --host 0.0.0.0 --port 8000
 
-Env: same as scraper — R2_* + LAKEKEEPER_* vars.
+Env: POSTGRES_URI (same as scraper/batch worker).
 """
 import io
 import json
 import logging
 import threading
-import time
-from datetime import datetime, timezone
 
 import duckdb
 import pyarrow as pa
@@ -29,7 +28,6 @@ from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from shared.iceberg import get_tables, make_catalog
 from shared.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -48,75 +46,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── In-memory DuckDB ────────────────────────────────────────────────────────
+# ── DuckDB attached to Postgres ─────────────────────────────────────────────
 
-_db_lock   = threading.Lock()
+_conn_lock = threading.Lock()
 _conn: duckdb.DuckDBPyConnection | None = None
-_last_load: datetime | None = None
-_REFRESH_INTERVAL_S = 3600  # re-load from Iceberg every hour
 
 
-def _load_iceberg() -> duckdb.DuckDBPyConnection:
-    log.info("Loading data from Iceberg...")
-    t0 = time.time()
-    catalog = make_catalog(settings)
-    groups_tbl, events_tbl, venues_tbl = get_tables(catalog)
-
-    groups_arrow  = groups_tbl.scan().to_arrow()
-    events_arrow  = events_tbl.scan().to_arrow()
-    venues_arrow  = venues_tbl.scan().to_arrow()
-
-    log.info(
-        "Loaded %d groups, %d events, %d venues in %.1fs",
-        len(groups_arrow), len(events_arrow), len(venues_arrow),
-        time.time() - t0,
-    )
-
+def _connect() -> duckdb.DuckDBPyConnection:
+    log.info("Attaching to Postgres...")
     conn = duckdb.connect(":memory:")
-    conn.register("groups_raw",  groups_arrow)
-    conn.register("events_raw",  events_arrow)
-    conn.register("venues_raw",  venues_arrow)
-
-    # Create deduplicated views (latest scraped_at per entity)
-    conn.execute("""
-        CREATE VIEW groups AS
-        SELECT * EXCLUDE(rn) FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY group_urlname ORDER BY scraped_at DESC
-            ) AS rn FROM groups_raw
-        ) WHERE rn = 1
-    """)
-    conn.execute("""
-        CREATE VIEW events AS
-        SELECT * EXCLUDE(rn) FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY event_id ORDER BY scraped_at DESC
-            ) AS rn FROM events_raw
-        ) WHERE rn = 1
-    """)
-    conn.execute("""
-        CREATE VIEW venues AS
-        SELECT * EXCLUDE(rn) FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY venue_id ORDER BY scraped_at DESC
-            ) AS rn FROM venues_raw
-        ) WHERE rn = 1
-    """)
+    conn.execute("INSTALL postgres; LOAD postgres;")
+    dsn = settings.postgres_uri.replace("'", "''")
+    conn.execute(f"ATTACH '{dsn}' AS pg (TYPE postgres, READ_ONLY)")
+    conn.execute("CREATE VIEW groups AS SELECT * FROM pg.groups")
+    conn.execute("CREATE VIEW events AS SELECT * FROM pg.events")
+    conn.execute("CREATE VIEW venues AS SELECT * FROM pg.venues")
+    log.info("Attached.")
     return conn
 
 
 def get_conn() -> duckdb.DuckDBPyConnection | None:
-    global _conn, _last_load
-    now = datetime.now(timezone.utc)
-    with _db_lock:
-        if _conn is None or (
-            _last_load and (now - _last_load).total_seconds() > _REFRESH_INTERVAL_S
-        ):
+    global _conn
+    with _conn_lock:
+        if _conn is None:
             try:
-                _conn = _load_iceberg()
-                _last_load = now
+                _conn = _connect()
             except Exception as e:
-                log.error("Failed to load Iceberg data: %s", e)
+                log.error("Failed to attach to Postgres: %s", e)
     return _conn
 
 
@@ -125,7 +81,7 @@ def startup():
     try:
         get_conn()
     except Exception as e:
-        log.error("Startup data load failed: %s", e)
+        log.error("Startup connection failed: %s", e)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -210,7 +166,6 @@ def stats():
         "total_networks":    row[3],
         "groups_with_events": row[4],
         "last_scraped_at":   row[5].isoformat() if row[5] else None,
-        "loaded_at":         _last_load.isoformat() if _last_load else None,
     }
 
 
@@ -390,9 +345,5 @@ def search(
 
 @app.post("/refresh")
 def refresh():
-    """Force a reload of data from Iceberg (admin use)."""
-    global _conn, _last_load
-    with _db_lock:
-        _conn = _load_iceberg()
-        _last_load = datetime.now(timezone.utc)
-    return {"status": "ok", "loaded_at": _last_load.isoformat()}
+    """No-op: data is queried live from Postgres, kept for API compatibility."""
+    return {"status": "ok", "message": "data is queried live from Postgres — no refresh needed"}

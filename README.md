@@ -71,13 +71,13 @@ Workers are **stateless**: they don't write to any database directly. All they n
 - **You run a large meetup network** and want to make sure your groups are scraped frequently and reliably
 - **You want to contribute compute** to the project without managing infrastructure
 - **You want to extend the scraper**.  The worker architecture makes it easy to add support for new platforms (Eventbrite, Facebook Events, etc.) by implementing a new `Platform` class
-- **You want to index your own platform** . The scraper isn't tied to the community seed. You can bypass the seed producer entirely and publish your own `GroupSeed` messages to the Kafka topic from your own system. This means any platform that can produce a group URL and basic metadata can feed into the index, whether that's a custom events platform, a university society system, or anything else
+- **You want to index your own platform** . The scraper isn't tied to the community seed — any platform that can produce a group URL and basic metadata can feed into the index, whether that's a custom events platform, a university society system, or anything else
 
 ### Request access
 
-To run a worker you need credentials for the shared Aiven Kafka instance. Open an issue or message in the [notanother.pizza Discord](https://discord.notanother.pizza) to request access. You will receive a `.env` file containing the Kafka connection details.
+To run a worker you need write access to the shared Postgres instance. Open an issue or message in the [notanother.pizza Discord](https://discord.notanother.pizza) to request access. You will receive a `.env` file containing the connection details.
 
-Note: **the sink (database writer) is not available to community runners** the data contracts (and rate limiting) are enforced at the sink level.
+> **Note:** the worker upserts into Postgres directly — there is currently no gateway enforcing rate limits or data contracts on community-run workers. Treat write credentials as trusted-contributor access, not public.
 
 ### Set up
 
@@ -121,15 +121,12 @@ docker run --env-file .env meetupmap python -m worker.scraper
 ## How it works
 
 ```
-Seed producer → [groups-to-scrape] → Workers → [groups-raw]  → Sink → Postgres → Renderer → GitHub Pages
-                                              → [venues-raw]  ↗
-                                              → [events-raw]  ↗
+community/groups.txt → Workers → Postgres (groups/events/venues) → Renderer → GitHub Pages
 ```
 
-1. The **seed producer** publishes one message per group to the `groups-to-scrape` Kafka topic
-2. **Workers** consume those messages, scrape group metadata and events from Meetup or Luma, and publish raw JSON to output topics
-3. The **sink consumer** reads the raw topics and upserts into Postgres — this runs centrally and is not available to community runners
-4. The **map renderer** queries Postgres and generates the static search and map pages deployed to GitHub Pages
+1. **Workers** (`worker.scraper`, or the daily automated `batch_worker.run`) read group URLs, scrape metadata and events from Meetup or Luma, and upsert them directly into Postgres
+2. The **map renderer** (`map.render`) queries Postgres and generates the static search and map pages deployed to GitHub Pages
+3. The **download API** (`download_service`) queries the same Postgres tables live to serve search, filtering, and bulk export endpoints
 
 ### Adding a new platform
 

@@ -34,12 +34,9 @@ jobs:
 
       - name: Run batch
         env:
-          R2_ENDPOINT_URL:        ${{ secrets.R2_ENDPOINT_URL }}
-          R2_ACCESS_KEY_ID:       ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY:   ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          LAKEKEEPER_CATALOG_URI: ${{ secrets.LAKEKEEPER_CATALOG_URI }}
-          MAX_EVENTS_PER_GROUP:   "0"
-          REQUEST_DELAY_SECONDS:  "1.5"
+          POSTGRES_URI:          ${{ secrets.POSTGRES_URI }}
+          MAX_EVENTS_PER_GROUP:  "0"
+          REQUEST_DELAY_SECONDS: "1.5"
         run: |
           MODE="${{ github.event.inputs.mode || 'batch' }}"
           LIMIT="${{ github.event.inputs.limit || '0' }}"

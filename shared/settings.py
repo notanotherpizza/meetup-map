@@ -8,15 +8,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Cloudflare R2
-    r2_endpoint_url: str
-    r2_access_key_id: str
-    r2_secret_access_key: str
-
-    # Iceberg REST catalog (Cloudflare R2 Data Catalog)
-    catalog_uri: str
-    catalog_token: str
-    catalog_warehouse: str = "meetup-map-2"
+    # Postgres (Aiven) — stores groups/venues/events
+    postgres_uri: str
 
     # Scraping
     max_events_per_group: int = 50

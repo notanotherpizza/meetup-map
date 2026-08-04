@@ -2,10 +2,10 @@
 worker/scraper.py
 ─────────────────
 Reads GroupSeed records from a flat file (one URL per line), scrapes each
-group via the appropriate platform handler, and writes GroupRaw + VenueRaw +
-EventRaw records directly to Iceberg tables on R2 via Lakekeeper.
+group via the appropriate platform handler, and upserts GroupRaw + VenueRaw +
+EventRaw records directly into Postgres.
 
-Replaces the previous Kafka-based pipeline. No Kafka or Postgres dependency.
+Replaces the previous Kafka-based pipeline. No Kafka dependency.
 
 Usage:
     python -m worker.scraper                          # scrape community/groups.txt
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import httpx
 
-from shared.iceberg import make_catalog, get_tables, write_result
+from shared.db import connect, write_result
 from shared.models import GroupSeed
 from shared.settings import Settings
 from worker.platforms.meetup import MeetupPlatform
@@ -101,15 +101,14 @@ async def run(input_path: Path, settings: Settings, limit: int | None) -> None:
         len(urls), len(done), len(pending),
     )
 
-    catalog = make_catalog(settings)
-    groups_table, events_table, venues_table = get_tables(catalog)
+    conn = connect(settings)
 
     async with httpx.AsyncClient(timeout=30) as http_client:
         for i, url in enumerate(pending, 1):
             log.info("[%d/%d] %s", i, len(pending), url)
             result = await scrape_one(url, settings, http_client)
             if result:
-                write_result(result, groups_table, events_table, venues_table)
+                write_result(conn, result)
                 done.add(url)
                 save_checkpoint(done)
                 log.info(
@@ -124,7 +123,7 @@ async def run(input_path: Path, settings: Settings, limit: int | None) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Scrape Meetup groups to Iceberg on R2")
+    parser = argparse.ArgumentParser(description="Scrape Meetup groups into Postgres")
     parser.add_argument(
         "--input", default="community/groups.txt",
         help="File of group URLs to scrape (default: community/groups.txt)",

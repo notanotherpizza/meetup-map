@@ -1,4 +1,18 @@
 services:
+  postgres:
+    image: postgres:16
+    container_name: meetupmap-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=meetupmap
+      - POSTGRES_PASSWORD=meetupmap
+      - POSTGRES_DB=meetupmap
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - meetupmap
+
   grafana:
     image: grafana/grafana:latest
     container_name: meetupmap-grafana
@@ -17,4 +31,5 @@ networks:
   meetupmap:
 
 volumes:
+  postgres-data:
   grafana-data:

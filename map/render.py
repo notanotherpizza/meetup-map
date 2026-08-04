@@ -1,7 +1,7 @@
 """
 map/render.py
 ─────────────
-Reads from Iceberg tables on R2 and renders:
+Reads from Postgres and renders:
   - docs/group_map.html  — self-contained Leaflet map
   - docs/index.html      — search page (injected from map/index_template.html)
 
@@ -20,9 +20,8 @@ from pathlib import Path
 
 import httpx
 import pandas as pd
-import pyarrow.compute as pc
+import psycopg
 
-from shared.iceberg import make_catalog, get_tables
 from shared.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -41,36 +40,22 @@ def network_colour(network: str) -> str:
     return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
 
 
-# ── Iceberg data fetching ──────────────────────────────────────────────────────
+# ── Postgres data fetching ──────────────────────────────────────────────────────
+
+def _query_df(conn: psycopg.Connection, sql: str) -> pd.DataFrame:
+    cur = conn.execute(sql)
+    cols = [c.name for c in cur.description]
+    return pd.DataFrame(cur.fetchall(), columns=cols)
+
 
 def fetch_data(settings: Settings) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load groups, events, venues from Iceberg. Returns latest snapshot of each."""
-    catalog = make_catalog(settings)
-    groups_table, events_table, venues_table = get_tables(catalog)
-
-    groups_df  = groups_table.scan().to_arrow().to_pandas()
-    events_df  = events_table.scan().to_arrow().to_pandas()
-    venues_df  = venues_table.scan().to_arrow().to_pandas()
+    """Load groups, events, venues from Postgres — already one current row per id."""
+    with psycopg.connect(settings.postgres_uri) as conn:
+        groups_df = _query_df(conn, "SELECT * FROM groups")
+        events_df = _query_df(conn, "SELECT * FROM events")
+        venues_df = _query_df(conn, "SELECT * FROM venues")
 
     log.info("Loaded: %d groups, %d events, %d venues", len(groups_df), len(events_df), len(venues_df))
-
-    # Deduplicate: keep most recently scraped record per group/event/venue
-    if not groups_df.empty:
-        groups_df = (groups_df
-                     .sort_values("scraped_at", ascending=False)
-                     .drop_duplicates(subset=["group_urlname"])
-                     .reset_index(drop=True))
-    if not events_df.empty:
-        events_df = (events_df
-                     .sort_values("scraped_at", ascending=False)
-                     .drop_duplicates(subset=["event_id"])
-                     .reset_index(drop=True))
-    if not venues_df.empty:
-        venues_df = (venues_df
-                     .sort_values("scraped_at", ascending=False)
-                     .drop_duplicates(subset=["venue_id"])
-                     .reset_index(drop=True))
-
     return groups_df, events_df, venues_df
 
 
@@ -730,7 +715,7 @@ def main() -> None:
     settings = Settings()
     DOCS_DIR.mkdir(exist_ok=True)
 
-    log.info("Loading data from Iceberg...")
+    log.info("Loading data from Postgres...")
     groups_df, events_df, venues_df = fetch_data(settings)
 
     log.info("Building groups...")

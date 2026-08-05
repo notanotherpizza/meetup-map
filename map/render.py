@@ -111,8 +111,8 @@ def build_groups(groups_df: pd.DataFrame, events_df: pd.DataFrame, venues_df: pd
         rows.append({
             "id":                          g["group_urlname"],
             "name":                        g.get("name") or g["group_urlname"],
-            "city":                        g.get("city") or "",
-            "country":                     g.get("country") or "",
+            "city":                        g.get("city") if pd.notna(g.get("city")) else "",
+            "country":                     g.get("country") if pd.notna(g.get("country")) else "",
             "lat":                         g["lat"],
             "lon":                         g["lon"],
             "member_count":                int(g["member_count"] or 0),
@@ -172,8 +172,8 @@ def build_upcoming_events(events_df: pd.DataFrame, groups_df: pd.DataFrame) -> l
             "rsvp_count": int(e["rsvp_count"] or 0) if pd.notna(e.get("rsvp_count")) else 0,
             "group_name": g.get("name") or e["group_urlname"],
             "group_id":   e["group_urlname"],
-            "city":       g.get("city") or "",
-            "country":    (g.get("country") or "").upper(),
+            "city":       g.get("city") if pd.notna(g.get("city")) else "",
+            "country":    (g.get("country") if pd.notna(g.get("country")) else "").upper(),
         })
     return rows
 

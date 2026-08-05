@@ -30,7 +30,7 @@ console:
 ```
 postgres://avnadmin:<password>@<host>:<port>/defaultdb?sslmode=require
 ```
-This becomes `POSTGRES_URI` everywhere below. The schema is applied
+This becomes `DATABASE_URL` everywhere below. The schema is applied
 automatically on first connect (`shared/db.py: ensure_schema`) — no manual
 migration step.
 
@@ -38,12 +38,12 @@ migration step.
 
 ## 2. Aiven App (compose.aiven.yaml)
 
-Create an Aiven App and upload `compose.aiven.yaml`. Set this environment
-variable in the Aiven Apps UI (used by both `batch` and `download` services):
-
-| Variable | Value |
-|---|---|
-| `POSTGRES_URI` | Aiven Postgres service URI (from step 1) |
+Create an Aiven App and upload `compose.aiven.yaml`. For **both** `batch` and
+`download`, use the app's **Connect service** button (Overview tab) to link
+the Postgres service from step 1 — don't set the connection string as a
+plain env var by hand. Aiven's app-credential integration always injects it
+under the fixed name `DATABASE_URL`; there's no way to customize that name,
+so the app code reads exactly that variable.
 
 Deploy the app. `batch` runs once per invocation (restart: no); `download`
 starts automatically and serves on port 8000.
@@ -56,7 +56,7 @@ Add these secrets to the GitHub repo (Settings → Secrets → Actions):
 
 | Secret | Value |
 |---|---|
-| `POSTGRES_URI` | Same Aiven Postgres service URI |
+| `DATABASE_URL` | Same Aiven Postgres service URI |
 | `DOWNLOAD_API` | Public URL of the `download` Aiven App |
 
 ---

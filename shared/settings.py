@@ -8,8 +8,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Postgres (Aiven) — stores groups/venues/events
-    postgres_uri: str
+    # Postgres (Aiven) — stores groups/venues/events.
+    # Named DATABASE_URL, not POSTGRES_URI: Aiven's Console "Connect service"
+    # flow always injects app-credential connections under this fixed name.
+    database_url: str
 
     # Scraping
     max_events_per_group: int = 50

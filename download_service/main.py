@@ -14,7 +14,7 @@ Supports output formats: json (default), csv, parquet
 Usage:
     uvicorn download_service.main:app --host 0.0.0.0 --port 8000
 
-Env: POSTGRES_URI (same as scraper/batch worker).
+Env: DATABASE_URL (same as scraper/batch worker).
 """
 import io
 import json
@@ -56,7 +56,7 @@ def _connect() -> duckdb.DuckDBPyConnection:
     log.info("Attaching to Postgres...")
     conn = duckdb.connect(":memory:")
     conn.execute("INSTALL postgres; LOAD postgres;")
-    dsn = settings.postgres_uri.replace("'", "''")
+    dsn = settings.database_url.replace("'", "''")
     conn.execute(f"ATTACH '{dsn}' AS pg (TYPE postgres, READ_ONLY)")
     conn.execute("CREATE VIEW groups AS SELECT * FROM pg.groups")
     conn.execute("CREATE VIEW events AS SELECT * FROM pg.events")

@@ -50,7 +50,7 @@ def _query_df(conn: psycopg.Connection, sql: str) -> pd.DataFrame:
 
 def fetch_data(settings: Settings) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load groups, events, venues from Postgres — already one current row per id."""
-    with psycopg.connect(settings.postgres_uri) as conn:
+    with psycopg.connect(settings.database_url) as conn:
         groups_df = _query_df(conn, "SELECT * FROM groups")
         events_df = _query_df(conn, "SELECT * FROM events")
         venues_df = _query_df(conn, "SELECT * FROM venues")

@@ -31,7 +31,7 @@ jobs:
 
       - name: Render map
         env:
-          POSTGRES_URI: ${{ secrets.POSTGRES_URI }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DOWNLOAD_API: ${{ secrets.DOWNLOAD_API }}
         run: python -m map.render
 

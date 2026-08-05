@@ -72,7 +72,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
 
 
 def connect(settings: Settings) -> psycopg.Connection:
-    conn = psycopg.connect(settings.postgres_uri, autocommit=True)
+    conn = psycopg.connect(settings.database_url, autocommit=True)
     ensure_schema(conn)
     return conn
 

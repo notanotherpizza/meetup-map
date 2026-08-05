@@ -34,7 +34,7 @@ jobs:
 
       - name: Run batch
         env:
-          POSTGRES_URI:          ${{ secrets.POSTGRES_URI }}
+          DATABASE_URL:          ${{ secrets.DATABASE_URL }}
           MAX_EVENTS_PER_GROUP:  "0"
           REQUEST_DELAY_SECONDS: "1.5"
         run: |

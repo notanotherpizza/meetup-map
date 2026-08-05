@@ -254,12 +254,12 @@ input.filter-input:focus { border-color: #111; }
 <script>
 // Download service base URL — set to your deployed Aiven App URL.
 // Leave empty to hide the download panel (static-only mode).
-const DOWNLOAD_API = '';
+const DOWNLOAD_API = 'https://019fd1a8-9898-7d03-981a-4dac8ab7dcff-8000.eur-1.aiven.app';
 
 // NETWORKS is small — injected at build time for fast sidebar render.
 // Wrapped in try/catch so a broken build doesn't kill the whole page.
 let NETWORKS = [];
-try { NETWORKS = [{"name":"PyData","colour":"#4a90d9","count":45},{"name":"Rust","colour":"#c85a2b","count":38},{"name":"MLOps","colour":"#6a5acd","count":22}]; } catch(e) { console.warn('NETWORKS not injected:', e); }
+try { NETWORKS = [{"name": "meetup", "colour": "#3ebd28", "count": 299}]; } catch(e) { console.warn('NETWORKS not injected:', e); }
 
 // GROUPS and EVENTS are loaded lazily from static data files
 let GROUPS     = [];

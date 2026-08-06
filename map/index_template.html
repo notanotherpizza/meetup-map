@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Not Another Pizza — Meetup Map</title>
+<meta name="description" content="Search 18,000+ meetup groups and events worldwide. Free, no account needed.">
+<meta property="og:title" content="Not Another Pizza — Meetup Map">
+<meta property="og:description" content="Search 18,000+ meetup groups and events worldwide. Free, no account needed.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Not Another Pizza — Meetup Map">
+<meta name="twitter:description" content="Search 18,000+ meetup groups and events worldwide. Free, no account needed.">
 <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -18,6 +24,7 @@ body { font-family: 'DM Sans', Arial, sans-serif; font-size: 13px; color: #111; 
 #hero { text-align: center; padding: 28px 16px 16px; border-bottom: 2px solid #111; }
 #logo-wrap { display: inline-block; margin-bottom: 18px; }
 #logo-wrap img { height: 300px; width: auto; display: block; }
+#tagline { font-size: 13px; color: #666; margin: 0 auto 16px; max-width: 480px; }
 
 /* ── Search bar ── */
 #search-bar-wrap {
@@ -210,6 +217,8 @@ input.filter-input:focus { border-color: #111; }
   <div id="logo-wrap">
     <img src="hero.jpg" alt="Not Another Pizza logo">
   </div>
+
+  <p id="tagline">Search 18,000+ meetup groups and events worldwide. Free, no account needed.</p>
 
   <div id="search-bar-wrap">
     <input id="search-bar-input" placeholder="kafka OR streaming AND (london OR berlin) AND NOT confluent" autocomplete="off" spellcheck="false" />

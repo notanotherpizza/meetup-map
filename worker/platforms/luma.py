@@ -54,7 +54,6 @@ class LumaPlatform(Platform):
     async def scrape(
         self,
         seed: GroupSeed,
-        browser,  # unused — kept for interface compatibility
         http_client: httpx.AsyncClient,
         max_past_events: int,
         worker_id: str,

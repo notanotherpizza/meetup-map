@@ -2,9 +2,11 @@
 batch_worker/run.py
 ────────────────────
 Daily batch runner. Orchestrates:
-  1. Discovery  — find new Meetup Pro groups via keyword × city grid
+  1. Discovery  — find new Meetup Pro groups (keyword × city grid) and Luma
+                  calendars (city/category pages)
   2. Merge      — append newly discovered URLs to community/groups.txt
-  3. Scrape     — scrape all groups and upsert into Postgres
+  3. Scrape     — scrape all groups (Meetup or Luma, dispatched by URL) and
+                  upsert into Postgres
 
 Designed to run as a daily cron job on Aiven Apps. Safe to re-run: discovery
 deduplicates against existing URLs, and the scraper checkpoints progress so an
@@ -24,12 +26,13 @@ from pathlib import Path
 
 import httpx
 
-from community.discover_meetup import discover as run_discovery
+from community.discover_meetup import discover as run_discovery_meetup
+from community.discover_luma import discover as run_discovery_luma
 from shared.db import connect, write_result
 from shared.models import GroupSeed
 from shared.settings import Settings
 from worker.scraper import load_urls, load_checkpoint, save_checkpoint, url_to_seed, WORKER_ID
-from worker.platforms.meetup import MeetupPlatform
+from worker.platforms import get_platform
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,33 +41,35 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 GROUPS_FILE = Path("community/groups.txt")
-DISCOVERY_OUTPUT = Path("community/discovered_meetup.txt")
-PLATFORM = MeetupPlatform()
+DISCOVERY_OUTPUT_MEETUP = Path("community/discovered_meetup.txt")
+DISCOVERY_OUTPUT_LUMA = Path("community/discovered_luma.txt")
 
 
 # ── Step 1: Discovery ──────────────────────────────────────────────────────────
 
+def _read_urls(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    return {
+        l.strip() for l in path.read_text().splitlines()
+        if l.strip() and not l.startswith("#")
+    }
+
+
 async def run_discover() -> int:
-    """Run Meetup discovery and append new groups to discovered_meetup.txt.
-    Returns count of newly discovered groups."""
+    """Run Meetup + Luma discovery and append new groups to their discovered files.
+    Returns count of newly discovered groups across both platforms."""
     log.info("=== Step 1: Discovery ===")
-    before = set()
-    if DISCOVERY_OUTPUT.exists():
-        before = {
-            l.strip() for l in DISCOVERY_OUTPUT.read_text().splitlines()
-            if l.strip() and not l.startswith("#")
-        }
+    before_meetup = _read_urls(DISCOVERY_OUTPUT_MEETUP)
+    before_luma = _read_urls(DISCOVERY_OUTPUT_LUMA)
 
-    await run_discovery(dry_run=False, output_path=DISCOVERY_OUTPUT)
+    await run_discovery_meetup(dry_run=False, output_path=DISCOVERY_OUTPUT_MEETUP)
+    await run_discovery_luma(dry_run=False, output_path=DISCOVERY_OUTPUT_LUMA)
 
-    after = set()
-    if DISCOVERY_OUTPUT.exists():
-        after = {
-            l.strip() for l in DISCOVERY_OUTPUT.read_text().splitlines()
-            if l.strip() and not l.startswith("#")
-        }
-
-    new_count = len(after - before)
+    new_count = (
+        len(_read_urls(DISCOVERY_OUTPUT_MEETUP) - before_meetup)
+        + len(_read_urls(DISCOVERY_OUTPUT_LUMA) - before_luma)
+    )
     log.info("Discovery complete — %d new groups found", new_count)
     return new_count
 
@@ -72,21 +77,10 @@ async def run_discover() -> int:
 # ── Step 2: Merge ─────────────────────────────────────────────────────────────
 
 def merge_discovered() -> int:
-    """Merge discovered URLs into groups.txt. Returns count of net-new URLs added."""
+    """Merge discovered URLs (Meetup + Luma) into groups.txt. Returns count of net-new URLs added."""
     log.info("=== Step 2: Merge ===")
-    existing = set()
-    if GROUPS_FILE.exists():
-        existing = {
-            l.strip() for l in GROUPS_FILE.read_text().splitlines()
-            if l.strip() and not l.startswith("#")
-        }
-
-    discovered = set()
-    if DISCOVERY_OUTPUT.exists():
-        discovered = {
-            l.strip() for l in DISCOVERY_OUTPUT.read_text().splitlines()
-            if l.strip() and not l.startswith("#")
-        }
+    existing = _read_urls(GROUPS_FILE)
+    discovered = _read_urls(DISCOVERY_OUTPUT_MEETUP) | _read_urls(DISCOVERY_OUTPUT_LUMA)
 
     new_urls = sorted(discovered - existing)
     if not new_urls:
@@ -128,7 +122,7 @@ async def run_scrape(settings: Settings, limit: int | None) -> None:
             log.info("[%d/%d] %s", i, len(pending), url)
             seed = url_to_seed(url, settings)
             try:
-                result = await PLATFORM.scrape(
+                result = await get_platform(url).scrape(
                     seed=seed,
                     http_client=http_client,
                     max_past_events=settings.max_events_per_group,

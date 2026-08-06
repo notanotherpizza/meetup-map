@@ -25,7 +25,7 @@ import httpx
 from shared.db import connect, write_result
 from shared.models import GroupSeed
 from shared.settings import Settings
-from worker.platforms.meetup import MeetupPlatform
+from worker.platforms import PLATFORMS, get_platform
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,14 +35,13 @@ log = logging.getLogger(__name__)
 
 WORKER_ID = os.environ.get("WORKER_ID", __import__("socket").gethostname())
 CHECKPOINT_FILE = Path(".scraper-checkpoint.json")
-PLATFORM = MeetupPlatform()
 
 
 def load_urls(path: Path) -> list[str]:
     urls = []
     for line in path.read_text().splitlines():
         line = line.strip()
-        if line and not line.startswith("#") and "meetup.com/" in line:
+        if line and not line.startswith("#") and any(p.can_handle(line) for p in PLATFORMS):
             urls.append(line)
     return urls
 
@@ -59,13 +58,18 @@ def save_checkpoint(done: set[str]) -> None:
 
 def url_to_seed(url: str, settings: Settings) -> GroupSeed:
     from datetime import datetime, timezone
-    urlname = url.rstrip("/").split("meetup.com/")[-1].split("/")[0]
+    if "lu.ma" in url or "luma.com" in url:
+        urlname = url.rstrip("/").split("/")[-1]
+        platform = "luma"
+    else:
+        urlname = url.rstrip("/").split("meetup.com/")[-1].split("/")[0]
+        platform = "meetup"
     return GroupSeed(
         group_urlname=urlname,
         group_url=url,
-        pro_network="meetup",
+        pro_network=platform,
         seeded_at=datetime.now(timezone.utc),
-        platform="meetup",
+        platform=platform,
     )
 
 
@@ -76,7 +80,7 @@ async def scrape_one(
 ) -> None:
     seed = url_to_seed(url, settings)
     try:
-        result = await PLATFORM.scrape(
+        result = await get_platform(url).scrape(
             seed=seed,
             http_client=http_client,
             max_past_events=settings.max_events_per_group,

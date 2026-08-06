@@ -115,15 +115,15 @@ def build_groups(groups_df: pd.DataFrame, events_df: pd.DataFrame, venues_df: pd
             "country":                     g.get("country") if pd.notna(g.get("country")) else "",
             "lat":                         g["lat"],
             "lon":                         g["lon"],
-            "member_count":                int(g["member_count"] or 0),
+            "member_count":                int(g["member_count"]) if pd.notna(g.get("member_count")) else 0,
             "source_url":                  g.get("source_url") or "",
             "platform":                    g.get("platform") or "meetup",
             "pro_network":                 g.get("pro_network") or "",
             "last_scraped_at":             g["scraped_at"],
             "events_scraped_at":           g["scraped_at"] if g.get("events_scrape_ok") else None,
-            "total_past_events":           int(g["total_past_events"] or 0) if pd.notna(g.get("total_past_events")) else None,
-            "total_events_in_db":          int(g.get("total_events_in_db") or 0),
-            "upcoming_events":             int(g.get("upcoming_events") or 0),
+            "total_past_events":           int(g["total_past_events"]) if pd.notna(g.get("total_past_events")) else None,
+            "total_events_in_db":          int(g["total_events_in_db"]) if pd.notna(g.get("total_events_in_db")) else 0,
+            "upcoming_events":             int(g["upcoming_events"]) if pd.notna(g.get("upcoming_events")) else 0,
             "last_event_at":               g.get("last_event_at"),
             "last_event_lat":              g.get("last_event_lat"),
             "last_event_lon":              g.get("last_event_lon"),
@@ -256,7 +256,7 @@ def groups_to_js(groups: list[dict], colour_map: dict[str, str]) -> str:
         if use_event_location:
             lat = round(float(g["last_event_lat"]), 6)
             lon = round(float(g["last_event_lon"]), 6)
-            geocode_source = g["last_event_geocode_source"] or "group"
+            geocode_source = g["last_event_geocode_source"] if pd.notna(g.get("last_event_geocode_source")) else "group"
         else:
             lat = round(float(g["lat"] or 0), 6)
             lon = round(float(g["lon"] or 0), 6)

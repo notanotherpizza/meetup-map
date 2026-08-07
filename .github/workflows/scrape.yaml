@@ -41,9 +41,9 @@ jobs:
           MODE="${{ github.event.inputs.mode || 'batch' }}"
           LIMIT="${{ github.event.inputs.limit || '0' }}"
           case "$MODE" in
-            discover-only) python -m batch-worker.run --discover-only ;;
-            scrape-only)   python -m batch-worker.run --scrape-only --limit "$LIMIT" ;;
-            *)             python -m batch-worker.run --limit "$LIMIT" ;;
+            discover-only) python -m batch_worker.run --discover-only ;;
+            scrape-only)   python -m batch_worker.run --scrape-only --limit "$LIMIT" ;;
+            *)             python -m batch_worker.run --limit "$LIMIT" ;;
           esac
 
       - name: Commit updated group list

@@ -1,16 +1,20 @@
 name: Batch scrape
 
+# No schedule trigger: the real continuous scraper is the Aiven App (batch3),
+# which has no execution time limit. GitHub-hosted runners hard-cap every job
+# at 6h regardless of timeout-minutes, and a full ~17k-group scrape needs
+# ~15h at the observed real-world rate (~3.2s/group) - a scheduled run here
+# would always get killed mid-pass, wasting ~6h of CI time daily for no
+# completed work. Keep this as a manual, bounded fallback/testing tool only.
 on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Max groups to scrape (0 = all)"
-        default: "0"
+        description: "Max groups to scrape (0 = all - will not finish in one run, see workflow header)"
+        default: "500"
       mode:
         description: "Mode: batch | discover-only | scrape-only"
         default: "batch"
-  schedule:
-    - cron: "0 2 * * *"   # 02:00 UTC daily
 
 concurrency:
   group: scrape
@@ -22,7 +26,7 @@ permissions:
 jobs:
   batch:
     runs-on: ubuntu-latest
-    timeout-minutes: 600   # 10h max — full 24k scrape takes ~8h at 1.5s/group
+    timeout-minutes: 180   # bounded manual/testing use only - see note above
 
     steps:
       - uses: actions/checkout@v4

@@ -86,7 +86,7 @@ jobs:
 
       - name: Discover shard ${{ matrix.shard }}/8
         run: |
-          python community/discover_meetup.py \
+          python -m community.discover_meetup \
             --keyword-shard ${{ matrix.shard }}/8 \
             --output "community/discovered_meetup_shard_${{ matrix.shard }}.txt"
 
@@ -110,7 +110,7 @@ jobs:
       - run: pip install httpx
 
       - name: Discover Luma calendars
-        run: python community/discover_luma.py --output community/discovered_luma_new.txt
+        run: python -m community.discover_luma --output community/discovered_luma_new.txt
 
       - uses: actions/upload-artifact@v4
         if: always()

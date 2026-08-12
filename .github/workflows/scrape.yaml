@@ -6,6 +6,14 @@ name: Batch scrape
 # ~15h at the observed real-world rate (~3.2s/group) - a scheduled run here
 # would always get killed mid-pass, wasting ~6h of CI time daily for no
 # completed work. Keep this as a manual, bounded fallback/testing tool only.
+#
+# discover-only mode is sharded across DISCOVER_SHARDS parallel jobs: the full
+# Meetup keyword x city grid (114 keywords x 367 cities, ~42k combos at
+# 0.5s/combo) needs ~5.8h minimum even before real request latency, which
+# alone exceeds the 6h hard ceiling as a single job - confirmed by a real run
+# that got cancelled at the 3h mark with zero progress, since discover_meetup.py
+# only writes output after the *entire* grid finishes. Sharding by keyword
+# divides that wall-clock by DISCOVER_SHARDS.
 on:
   workflow_dispatch:
     inputs:
@@ -25,8 +33,9 @@ permissions:
 
 jobs:
   batch:
+    if: github.event.inputs.mode != 'discover-only'
     runs-on: ubuntu-latest
-    timeout-minutes: 180   # bounded manual/testing use only - see note above
+    timeout-minutes: 350   # bounded manual/testing use only - see note above; kept under GH's hard 360min job ceiling
 
     steps:
       - uses: actions/checkout@v4
@@ -45,12 +54,146 @@ jobs:
           MODE="${{ github.event.inputs.mode || 'batch' }}"
           LIMIT="${{ github.event.inputs.limit || '0' }}"
           case "$MODE" in
-            discover-only) python -m batch_worker.run --discover-only ;;
-            scrape-only)   python -m batch_worker.run --scrape-only --limit "$LIMIT" ;;
-            *)             python -m batch_worker.run --limit "$LIMIT" ;;
+            scrape-only) python -m batch_worker.run --scrape-only --limit "$LIMIT" ;;
+            *)           python -m batch_worker.run --limit "$LIMIT" ;;
           esac
 
       - name: Commit updated group list
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add community/
+          git diff --staged --quiet || git commit -m "chore: update group list $(date -u +%Y-%m-%dT%H:%M UTC)"
+          git push
+
+  discover-meetup:
+    # Shard count is hardcoded to 8 here and must match len(matrix.shard) below.
+    if: github.event.inputs.mode == 'discover-only'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install httpx
+
+      - name: Discover shard ${{ matrix.shard }}/8
+        run: |
+          python community/discover_meetup.py \
+            --keyword-shard ${{ matrix.shard }}/8 \
+            --output "community/discovered_meetup_shard_${{ matrix.shard }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: discovered-meetup-shard-${{ matrix.shard }}
+          path: community/discovered_meetup_shard_${{ matrix.shard }}.txt
+          if-no-files-found: ignore
+
+  discover-luma:
+    if: github.event.inputs.mode == 'discover-only'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install httpx
+
+      - name: Discover Luma calendars
+        run: python community/discover_luma.py --output community/discovered_luma_new.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: discovered-luma
+          path: community/discovered_luma_new.txt
+          if-no-files-found: ignore
+
+  merge-discovered:
+    needs: [discover-meetup, discover-luma]
+    if: always() && github.event.inputs.mode == 'discover-only'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: shards
+        continue-on-error: true
+
+      - name: Merge shard results into groups.txt
+        run: |
+          python3 - <<'PYEOF'
+          from pathlib import Path
+
+          def read_urls(p: Path) -> set[str]:
+              if not p.exists():
+                  return set()
+              return {
+                  l.strip() for l in p.read_text().splitlines()
+                  if l.strip() and not l.startswith("#")
+              }
+
+          shards = Path("shards")
+          combined_meetup = set()
+          combined_luma = set()
+          if shards.exists():
+              for f in shards.glob("discovered-meetup-shard-*/*.txt"):
+                  combined_meetup |= read_urls(f)
+              for f in shards.glob("discovered-luma/*.txt"):
+                  combined_luma |= read_urls(f)
+
+          canonical_meetup = Path("community/discovered_meetup.txt")
+          canonical_luma = Path("community/discovered_luma.txt")
+          groups_file = Path("community/groups.txt")
+
+          new_meetup = combined_meetup - read_urls(canonical_meetup)
+          new_luma = combined_luma - read_urls(canonical_luma)
+
+          if new_meetup:
+              with canonical_meetup.open("a") as f:
+                  f.write(f"\n# Discovered by sharded discover-only run — {len(new_meetup)} groups\n")
+                  for url in sorted(new_meetup):
+                      f.write(url + "\n")
+              print(f"Added {len(new_meetup)} new Meetup URLs to {canonical_meetup}")
+
+          if new_luma:
+              with canonical_luma.open("a") as f:
+                  f.write(f"\n# Discovered by sharded discover-only run — {len(new_luma)} groups\n")
+                  for url in sorted(new_luma):
+                      f.write(url + "\n")
+              print(f"Added {len(new_luma)} new Luma URLs to {canonical_luma}")
+
+          existing_groups = read_urls(groups_file)
+          discovered = read_urls(canonical_meetup) | read_urls(canonical_luma)
+          new_to_groups = sorted(discovered - existing_groups)
+
+          if new_to_groups:
+              with groups_file.open("a") as f:
+                  f.write(f"\n# Discovered by sharded discover-only run\n")
+                  for url in new_to_groups:
+                      f.write(url + "\n")
+              print(f"Added {len(new_to_groups)} new URLs to {groups_file}")
+          else:
+              print("No new URLs to merge into groups.txt")
+          PYEOF
+
+      - name: Commit updated group list
+        if: always()
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

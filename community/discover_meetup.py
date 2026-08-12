@@ -155,7 +155,9 @@ def meetup_url(urlname: str) -> str:
     return f"https://www.meetup.com/{urlname}/"
 
 
-async def discover(dry_run: bool, output_path: Path) -> None:
+async def discover(dry_run: bool, output_path: Path, keywords: list[str] | None = None) -> None:
+    keywords = KEYWORDS if keywords is None else keywords
+
     existing: set[str] = set()
     for path in [Path("community/groups.txt"), output_path]:
         if path.exists():
@@ -172,11 +174,11 @@ async def discover(dry_run: bool, output_path: Path) -> None:
                 existing_slugs.add(slug.lower())
 
     discovered_slugs: set[str] = set()
-    total_combos = len(KEYWORDS) * len(CITIES)
+    total_combos = len(keywords) * len(CITIES)
     done = 0
 
     async with httpx.AsyncClient() as client:
-        for keyword in KEYWORDS:
+        for keyword in keywords:
             for label, lat, lon, radius in CITIES:
                 done += 1
                 print(
@@ -226,8 +228,23 @@ def main() -> None:
         default="community/discovered_meetup.txt",
         help="Output file (appended to). Default: community/discovered_meetup.txt",
     )
+    parser.add_argument(
+        "--keyword-shard",
+        default=None,
+        help="Run only this shard of the keyword list, as 'i/n' (0-indexed), e.g. '0/8'. "
+             "Splits the keyword x city grid across n parallel runs so each finishes well "
+             "within a CI job's time limit — the full grid (114 keywords x 367 cities, "
+             "~42k combos at 0.5s/combo) needs ~5.8h minimum, which alone exceeds GitHub's "
+             "6h hard job ceiling once real request latency is added.",
+    )
     args = parser.parse_args()
-    asyncio.run(discover(args.dry_run, Path(args.output)))
+
+    keywords = None
+    if args.keyword_shard:
+        i, n = (int(x) for x in args.keyword_shard.split("/"))
+        keywords = KEYWORDS[i::n]
+
+    asyncio.run(discover(args.dry_run, Path(args.output), keywords=keywords))
 
 
 if __name__ == "__main__":

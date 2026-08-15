@@ -7,13 +7,15 @@ name: Batch scrape
 # would always get killed mid-pass, wasting ~6h of CI time daily for no
 # completed work. Keep this as a manual, bounded fallback/testing tool only.
 #
-# discover-only mode is sharded across DISCOVER_SHARDS parallel jobs: the full
-# Meetup keyword x city grid (114 keywords x 367 cities, ~42k combos at
-# 0.5s/combo) needs ~5.8h minimum even before real request latency, which
-# alone exceeds the 6h hard ceiling as a single job - confirmed by a real run
-# that got cancelled at the 3h mark with zero progress, since discover_meetup.py
-# only writes output after the *entire* grid finishes. Sharding by keyword
-# divides that wall-clock by DISCOVER_SHARDS.
+# discover-only mode is sharded across 16 parallel jobs: the full Meetup
+# keyword x city grid (114 keywords x 367 cities, ~42k combos) runs at a
+# measured real-world rate of ~2.27s/combo (request latency, not the 0.5s
+# inter-combo sleep - a first attempt assumed the sleep alone and undersized
+# both the timeout and shard count, so every shard got cancelled mid-run with
+# nothing written, since discover_meetup.py only writes output after the
+# *entire* grid finishes). ~42k combos x 2.27s ~= 26.5h total, so it needs
+# ~16 shards of ~7-8 keywords each (~97-111min/shard) to finish comfortably
+# inside a bounded job timeout. Sharding by keyword divides that wall-clock.
 on:
   workflow_dispatch:
     inputs:
@@ -68,13 +70,13 @@ jobs:
           git push
 
   discover-meetup:
-    # Shard count is hardcoded to 8 here and must match len(matrix.shard) below.
+    # Shard count is hardcoded to 16 here and must match len(matrix.shard) below.
     if: github.event.inputs.mode == 'discover-only'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     strategy:
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
@@ -84,10 +86,10 @@ jobs:
           cache: pip
       - run: pip install httpx
 
-      - name: Discover shard ${{ matrix.shard }}/8
+      - name: Discover shard ${{ matrix.shard }}/16
         run: |
           python -m community.discover_meetup \
-            --keyword-shard ${{ matrix.shard }}/8 \
+            --keyword-shard ${{ matrix.shard }}/16 \
             --output "community/discovered_meetup_shard_${{ matrix.shard }}.txt"
 
       - uses: actions/upload-artifact@v4

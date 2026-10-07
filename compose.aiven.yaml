@@ -7,6 +7,8 @@ services:
       APP_MODE: batch-scrape-only
       REQUEST_DELAY_SECONDS: "1.5"
       MAX_EVENTS_PER_GROUP: "0"
+      # Always scrape the live list rather than the one baked into the image
+      GROUPS_URL: https://raw.githubusercontent.com/notanotherpizza/meetup-map/main/community/groups.txt
     restart: "no"
 
   download:

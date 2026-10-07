@@ -22,3 +22,6 @@ geocode_cache.json
 .DS_Store
 
 infra/grafana/provisioning/datasources/postgres.yaml
+demo/out/backlog.json
+demo/out/queue.txt
+demo/out/_video/

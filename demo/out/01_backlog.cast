@@ -1,0 +1,4 @@
+{"version":3,"term":{"cols":80,"rows":24},"timestamp":1791371802,"command":"/private/tmp/claude-503/-Users-hugh-repos-mapping-pydata/51870eb0-c033-4bb8-91f6-a84f79db329d/scratchpad/v/bin/python demo/01_backlog.py","env":{"SHELL":"/bin/zsh"}}
+[0.134, "o", "listed groups   :  43,425\r\nin the index    :  15,442\r\n"]
+[0.001, "o", "never scraped   :  27,981  (64% of the list)\r\ntokens used     :       0\r\nwall clock      :   0.10s\r\n"]
+[0.005, "x", "0"]

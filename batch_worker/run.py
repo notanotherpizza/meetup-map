@@ -21,7 +21,9 @@ Usage:
 import argparse
 import asyncio
 import logging
+import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -31,8 +33,8 @@ from community.discover_luma import discover as run_discovery_luma
 from shared.db import connect, write_result
 from shared.models import GroupSeed
 from shared.settings import Settings
-from worker.scraper import load_urls, load_checkpoint, save_checkpoint, url_to_seed, WORKER_ID
-from worker.platforms import get_platform
+from worker.scraper import load_urls, url_to_seed, WORKER_ID
+from worker.platforms import get_platform, PLATFORMS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -98,24 +100,60 @@ def merge_discovered() -> int:
 
 # ── Step 3: Scrape ─────────────────────────────────────────────────────────────
 
+def _url_to_urlname(url: str) -> str:
+    return url_to_seed(url, None).group_urlname
+
+
+def fetch_latest_groups(url: str | None) -> list[str] | None:
+    """Fetch the current groups.txt so a long-lived container isn't stuck with
+    the list baked into its image at build time. Returns None on any failure."""
+    if not url:
+        return None
+    try:
+        resp = httpx.get(url, timeout=30, follow_redirects=True)
+        resp.raise_for_status()
+    except Exception as exc:
+        log.warning("Could not fetch %s (%s) - using bundled groups.txt", url, exc)
+        return None
+    return [
+        l.strip() for l in resp.text.splitlines()
+        if l.strip() and not l.startswith("#") and any(p.can_handle(l.strip()) for p in PLATFORMS)
+    ]
+
+
+def order_by_staleness(urls: list[str], conn) -> list[str]:
+    """Never-scraped groups first, then oldest scraped_at first.
+
+    Progress lives in Postgres rather than a checkpoint file, so a container
+    restart can't send the scraper back over the head of the list while
+    newly discovered groups at the tail never get reached."""
+    scraped = dict(conn.execute("SELECT group_urlname, scraped_at FROM groups").fetchall())
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    seen: set[str] = set()
+    keyed = []
+    for i, url in enumerate(urls):
+        name = _url_to_urlname(url)
+        if name in seen:
+            continue
+        seen.add(name)
+        keyed.append((scraped.get(name, epoch), i, url))
+    keyed.sort()
+    return [u for _, _, u in keyed]
+
+
 async def run_scrape(settings: Settings, limit: int | None) -> None:
     log.info("=== Step 3: Scrape ===")
-    urls = load_urls(GROUPS_FILE)
-    done = load_checkpoint()
-    pending = [u for u in urls if u not in done]
+    urls = fetch_latest_groups(os.environ.get("GROUPS_URL")) or load_urls(GROUPS_FILE)
+    conn = connect(settings)
+    pending = order_by_staleness(urls, conn)
     if limit:
         pending = pending[:limit]
 
-    log.info(
-        "Total: %d URLs | Done: %d | Pending: %d",
-        len(urls), len(done), len(pending),
-    )
+    log.info("Total: %d URLs | Scraping: %d", len(urls), len(pending))
 
     if not pending:
         log.info("Nothing to scrape.")
         return
-
-    conn = connect(settings)
 
     async with httpx.AsyncClient(timeout=30) as http_client:
         for i, url in enumerate(pending, 1):
@@ -129,8 +167,6 @@ async def run_scrape(settings: Settings, limit: int | None) -> None:
                     worker_id=WORKER_ID,
                 )
                 write_result(conn, result)
-                done.add(url)
-                save_checkpoint(done)
                 log.info(
                     "  -> %s | %d events | %d venues",
                     result.group.name,

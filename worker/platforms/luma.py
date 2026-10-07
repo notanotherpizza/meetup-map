@@ -33,6 +33,9 @@ from worker.platforms.base import Platform, ScrapeResult
 log = logging.getLogger(__name__)
 
 LUMA_BASE = "https://luma.com"
+LUMA_API = "https://api.lu.ma"
+PAST_PAGE_SIZE = 50
+MAX_PAST_PAGES = 4         # up to 200 past events per group
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -97,6 +100,9 @@ class LumaPlatform(Platform):
 
             # Past: also built directly from featured_items
             for item in past_items:
+                start = _parse_dt((item.get("event") or {}).get("start_at") or item.get("start_at"))
+                if start and start > now:
+                    continue  # not actually past; never mislabel an upcoming event
                 event_raw, venue_raw = _event_from_featured_item(
                     item, seed.group_urlname, now, status="past"
                 )
@@ -172,21 +178,34 @@ class LumaPlatform(Platform):
         calendar = props.get("calendar", {})
         upcoming_items = props.get("featured_items", [])
 
-        # Past: the ?period=past page carries the same featured_items payload
-        # (full event + coordinates) as the upcoming page. Event links are not
-        # present as hrefs in the server-rendered HTML, so scraping hrefs only
-        # ever matched assets and nav links (pwa.webmanifest, signin?next=...).
+        # Past: the ?period=past page just repeats the upcoming list, and event
+        # links are not hrefs in the server-rendered HTML, so use the calendar
+        # API the site itself calls for past events (same entry shape as
+        # featured_items). Paginated; capped to keep requests per group low.
         past_items: list[dict] = []
-        await asyncio.sleep(INTER_REQUEST_DELAY)
-        try:
-            past_data = await self._fetch_next_data(f"{url}?period=past", client)
-            past_items = (past_data.get("props", {})
-                                   .get("pageProps", {})
-                                   .get("initialData", {})
-                                   .get("data", {})
-                                   .get("featured_items", []))
-        except Exception as exc:
-            log.warning("  Could not fetch past events for %s: %s", slug, exc)
+        cal_id = calendar.get("api_id")
+        if cal_id:
+            cursor = None
+            for _ in range(MAX_PAST_PAGES):
+                await asyncio.sleep(INTER_REQUEST_DELAY)
+                params = {"calendar_api_id": cal_id, "period": "past",
+                          "pagination_limit": PAST_PAGE_SIZE}
+                if cursor:
+                    params["pagination_cursor"] = cursor
+                try:
+                    resp = await client.get(
+                        f"{LUMA_API}/calendar/get-items", params=params,
+                        headers=HEADERS, timeout=REQUEST_TIMEOUT,
+                    )
+                    resp.raise_for_status()
+                    payload = resp.json()
+                except Exception as exc:
+                    log.warning("  Could not fetch past events for %s: %s", slug, exc)
+                    break
+                past_items.extend(payload.get("entries", []))
+                cursor = payload.get("next_cursor")
+                if not payload.get("has_more") or not cursor:
+                    break
 
         return calendar, upcoming_items, past_items
 

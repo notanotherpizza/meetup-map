@@ -66,15 +66,15 @@ class LumaPlatform(Platform):
         slug = url.rstrip("/").split("/")[-1]
 
         # ── Step 1: calendar page ─────────────────────────────────────────
-        calendar_data, upcoming_items, past_slugs = await self._scrape_calendar(
+        calendar_data, upcoming_items, past_items = await self._scrape_calendar(
             slug, http_client
         )
 
-        log.info("  Luma %s: %d upcoming items, %d past slugs",
-                 seed.group_urlname, len(upcoming_items), len(past_slugs))
+        log.info("  Luma %s: %d upcoming items, %d past items",
+                 seed.group_urlname, len(upcoming_items), len(past_items))
 
         if max_past_events > 0:
-            past_slugs = past_slugs[:max_past_events]
+            past_items = past_items[:max_past_events]
 
         # ── Step 2: events ────────────────────────────────────────────────
         past_events:     list[EventRaw] = []
@@ -95,20 +95,16 @@ class LumaPlatform(Platform):
                     venues.append(venue_raw)
                     seen_venues.add(venue_raw.venue_id)
 
-            # Past: still requires per-event page fetch
-            for ev_slug in past_slugs:
-                try:
-                    event_raw, venue_raw = await self._scrape_event(
-                        ev_slug, seed.group_urlname, "past", now, http_client
-                    )
-                    if event_raw:
-                        past_events.append(event_raw)
-                    if venue_raw and venue_raw.venue_id not in seen_venues:
-                        venues.append(venue_raw)
-                        seen_venues.add(venue_raw.venue_id)
-                except Exception as exc:
-                    log.warning("  Failed to scrape Luma event %s: %s", ev_slug, exc)
-                await asyncio.sleep(INTER_REQUEST_DELAY)
+            # Past: also built directly from featured_items
+            for item in past_items:
+                event_raw, venue_raw = _event_from_featured_item(
+                    item, seed.group_urlname, now, status="past"
+                )
+                if event_raw:
+                    past_events.append(event_raw)
+                if venue_raw and venue_raw.venue_id not in seen_venues:
+                    venues.append(venue_raw)
+                    seen_venues.add(venue_raw.venue_id)
 
             events_scrape_ok = True
         except Exception as exc:
@@ -135,7 +131,7 @@ class LumaPlatform(Platform):
             scraped_at=now,
             scrape_method="httpx_nextdata",
             events_scrape_ok=events_scrape_ok,
-            total_past_events=len(past_slugs),
+            total_past_events=len(past_items),
             worker_id=worker_id,
             scrape_duration_ms=duration_ms,
         )
@@ -157,7 +153,7 @@ class LumaPlatform(Platform):
         slug: str,
         client: httpx.AsyncClient,
     ) -> tuple[dict, list[dict], list[str]]:
-        """Returns (calendar_dict, upcoming_featured_items, past_slugs).
+        """Returns (calendar_dict, upcoming_featured_items, past_featured_items).
 
         upcoming_featured_items are the raw item dicts from featured_items —
         they already contain full event + coordinate data so we don't need
@@ -176,39 +172,23 @@ class LumaPlatform(Platform):
         calendar = props.get("calendar", {})
         upcoming_items = props.get("featured_items", [])
 
-        # Past: fetch ?period=past and extract event slugs from href links.
-        # Luma now uses /event/<slug> paths on luma.com.
-        past_slugs: list[str] = []
+        # Past: the ?period=past page carries the same featured_items payload
+        # (full event + coordinates) as the upcoming page. Event links are not
+        # present as hrefs in the server-rendered HTML, so scraping hrefs only
+        # ever matched assets and nav links (pwa.webmanifest, signin?next=...).
+        past_items: list[dict] = []
         await asyncio.sleep(INTER_REQUEST_DELAY)
         try:
-            resp = await client.get(
-                f"{url}?period=past",
-                headers=HEADERS,
-                timeout=REQUEST_TIMEOUT,
-                follow_redirects=True,
-            )
-            resp.raise_for_status()
-            # Match both legacy bare slugs (/rwwjsa5z) and new /event/<slug> paths
-            seen: set[str] = set()
-            SKIP = {"discover", "signin", "home", slug, "event", "calendar"}
-            for href in re.findall(r'href="/([^"]+)"', resp.text):
-                # Strip /event/ prefix if present
-                parts = href.strip("/").split("/")
-                ev_slug = parts[-1]
-                if (
-                    ev_slug
-                    and ev_slug not in seen
-                    and ev_slug not in SKIP
-                    and not ev_slug.startswith("cal-")
-                    and not ev_slug.startswith("usr-")
-                    and len(ev_slug) >= 6
-                ):
-                    seen.add(ev_slug)
-                    past_slugs.append(ev_slug)
+            past_data = await self._fetch_next_data(f"{url}?period=past", client)
+            past_items = (past_data.get("props", {})
+                                   .get("pageProps", {})
+                                   .get("initialData", {})
+                                   .get("data", {})
+                                   .get("featured_items", []))
         except Exception as exc:
-            log.warning("  Could not fetch past slugs for %s: %s", slug, exc)
+            log.warning("  Could not fetch past events for %s: %s", slug, exc)
 
-        return calendar, upcoming_items, past_slugs
+        return calendar, upcoming_items, past_items
 
     # ── Event page ────────────────────────────────────────────────────────
 
@@ -283,6 +263,7 @@ def _event_from_featured_item(
     item: dict,
     group_urlname: str,
     now: datetime,
+    status: str = "upcoming",
 ) -> tuple[Optional[EventRaw], Optional[VenueRaw]]:
     """Build EventRaw + VenueRaw from a featured_items entry.
 
@@ -305,7 +286,7 @@ def _event_from_featured_item(
         event_id=event_id,
         event_url=event_url,
         group_urlname=group_urlname,
-        status="upcoming",
+        status=status,
         rsvp_count=rsvp_count,
         now=now,
         scrape_method="httpx_nextdata_calendar",

@@ -5,10 +5,17 @@ soon it deserves a scrape. It never scrapes, writes the DB or touches the
 queue; those stay scripted (see 03_queue.py).
 
     ANTHROPIC_API_KEY=... python demo/02_agent_triage.py --sample 25
+
+Through the Aiven AI gateway (Anthropic-compatible, metered per key):
+    export ANTHROPIC_BASE_URL=https://ai.aiven.io
+    export ANTHROPIC_AUTH_TOKEN=<aiven ai access key>
+    export TRIAGE_MODEL=claude-haiku-4-5
+    python demo/02_agent_triage.py --sample 25
 """
 import argparse
 import asyncio
 import json
+import os
 import random
 import sys
 from pathlib import Path
@@ -22,8 +29,9 @@ from worker.platforms import get_platform  # noqa: E402
 from worker.scraper import url_to_seed  # noqa: E402
 
 OUT = ROOT / "demo" / "out"
-MODEL = "claude-haiku-4-5-20251001"
-PRICE_IN, PRICE_OUT = 1.00 / 1e6, 5.00 / 1e6  # USD per token, Haiku 4.5
+MODEL = os.environ.get("TRIAGE_MODEL", "claude-haiku-4-5-20251001")
+# USD per token, Haiku 4.5 list price; the Aiven console shows the metered figure per key
+PRICE_IN, PRICE_OUT = 1.00 / 1e6, 5.00 / 1e6
 
 SYSTEM = """You triage a backlog of meetup groups that have never been scraped.
 For each group URL you are given: call peek_group, then call record_triage exactly once.

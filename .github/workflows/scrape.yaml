@@ -25,6 +25,9 @@ on:
       mode:
         description: "Mode: batch | discover-only | scrape-only"
         default: "batch"
+      platform:
+        description: "Only scrape this platform: meetup | luma (blank = all)"
+        default: ""
 
 concurrency:
   group: scrape
@@ -55,9 +58,12 @@ jobs:
         run: |
           MODE="${{ github.event.inputs.mode || 'batch' }}"
           LIMIT="${{ github.event.inputs.limit || '0' }}"
+          PLATFORM="${{ github.event.inputs.platform }}"
+          PLATFORM_ARGS=()
+          [ -n "$PLATFORM" ] && PLATFORM_ARGS=(--platform "$PLATFORM")
           case "$MODE" in
-            scrape-only) python -m batch_worker.run --scrape-only --limit "$LIMIT" ;;
-            *)           python -m batch_worker.run --limit "$LIMIT" ;;
+            scrape-only) python -m batch_worker.run --scrape-only --limit "$LIMIT" "${PLATFORM_ARGS[@]}" ;;
+            *)           python -m batch_worker.run --limit "$LIMIT" "${PLATFORM_ARGS[@]}" ;;
           esac
 
       - name: Commit updated group list

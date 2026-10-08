@@ -17,6 +17,7 @@ Usage:
     python -m batch_worker.run --discover-only   # just run discovery, don't scrape
     python -m batch_worker.run --scrape-only     # skip discovery, just scrape
     python -m batch_worker.run --limit 50        # scrape at most N groups (for testing)
+    python -m batch_worker.run --scrape-only --platform luma   # only one platform
 """
 import argparse
 import asyncio
@@ -141,9 +142,12 @@ def order_by_staleness(urls: list[str], conn) -> list[str]:
     return [u for _, _, u in keyed]
 
 
-async def run_scrape(settings: Settings, limit: int | None) -> None:
+async def run_scrape(settings: Settings, limit: int | None, platform: str | None = None) -> None:
     log.info("=== Step 3: Scrape ===")
     urls = fetch_latest_groups(os.environ.get("GROUPS_URL")) or load_urls(GROUPS_FILE)
+    if platform:
+        urls = [u for u in urls if type(get_platform(u)).__name__.lower().startswith(platform.lower())]
+        log.info("Platform filter %r: %d URLs", platform, len(urls))
     conn = connect(settings)
     pending = order_by_staleness(urls, conn)
     if limit:
@@ -183,7 +187,7 @@ async def run_scrape(settings: Settings, limit: int | None) -> None:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
-async def main(discover: bool, scrape: bool, limit: int | None) -> None:
+async def main(discover: bool, scrape: bool, limit: int | None, platform: str | None = None) -> None:
     settings = Settings()
 
     if discover:
@@ -191,7 +195,7 @@ async def main(discover: bool, scrape: bool, limit: int | None) -> None:
         merge_discovered()
 
     if scrape:
-        await run_scrape(settings, limit)
+        await run_scrape(settings, limit, platform)
 
 
 def entrypoint() -> None:
@@ -199,13 +203,14 @@ def entrypoint() -> None:
     parser.add_argument("--discover-only", action="store_true")
     parser.add_argument("--scrape-only", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--platform", default=None, help="Only scrape this platform (meetup | luma)")
     args = parser.parse_args()
 
     discover = not args.scrape_only
     scrape = not args.discover_only
 
     try:
-        asyncio.run(main(discover=discover, scrape=scrape, limit=args.limit))
+        asyncio.run(main(discover=discover, scrape=scrape, limit=args.limit, platform=args.platform))
     except KeyboardInterrupt:
         log.info("Interrupted.")
         sys.exit(0)

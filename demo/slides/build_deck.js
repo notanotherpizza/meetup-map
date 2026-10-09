@@ -1,245 +1,215 @@
+// Aiven brand deck (Brand 2.0) for the Not Another Pizza case study. Geometry = 1920x1080 px frame on a 13.333x7.5 in slide (1 px = 1/144 in).
 const pptxgen = require("pptxgenjs");
-const { applyTheme } = require("/Users/hugh/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/b1649cdc-7b5f-4edf-92ac-7b688a899348/185a6ff1-e671-4193-8139-7be127d3ff4c/skills/pptx/scripts/apply_theme.js");
+const sharp = require("sharp");
+const fs = require("fs");
+const path = require("path");
 
-const REPO = "/Users/hugh/repos/meetup-map/demo";
-const OUT = `${REPO}/slides/ato-case-study.pptx`;
+const SK = "/private/tmp/claude-503/-Users-hugh-repos-mapping-pydata/51870eb0-c033-4bb8-91f6-a84f79db329d/scratchpad/brand";
+const DEMO = "/Users/hugh/repos/meetup-map/demo";
+const OUT = `${DEMO}/slides/ato-case-study.pptx`;
+const px = (v) => v / 144;
+const pt = (v) => v * 0.75;
 
-const THEME = {
-  name: "Aiven case study (dark)",
-  headFontFace: "Calibri",
-  bodyFontFace: "Calibri",
-  colors: {
-    dk1: "16171A", lt1: "F4F4F4", dk2: "1F2021", lt2: "B5B5B7",
-    accent1: "1BB2B0", accent2: "FFC21A", accent3: "6F64FF",
-    accent4: "21D16B", accent5: "C224D5", accent6: "444547",
-    hlink: "2ED0CD", folHlink: "B5B5B7",
-  },
-};
+const GREEN = "5FFA74", NEAR = "05080F", ROW = "1D1D1F", MUTED = "8D9098", SOFT = "DADBDE", DIV = "22252D", WHITE = "FFFFFF";
+const HEAD = "Funnel Display ExtraBold", SANS = "Inter", MONO = "Geist Mono";
 
 const pres = new pptxgen();
-pres.layout = "LAYOUT_16x9"; // 10 x 5.625 in
+pres.layout = "LAYOUT_WIDE";
 pres.title = "Case study: Not Another Pizza";
-pres.theme = { headFontFace: THEME.headFontFace, bodyFontFace: THEME.bodyFontFace };
-const C = pres.SchemeColor;
+pres.author = "Aiven";
 
-pres.defineSlideMaster({
-  title: "CONTENT",
-  background: { color: C.text1 },
-  objects: [],
-  slideNumber: { x: 9.2, y: 5.2, w: 0.5, h: 0.3, fontSize: 10, color: C.accent6 },
-});
-pres.defineSlideMaster({
-  title: "CONTENT_TITLE",
-  background: { color: C.text1 },
-  objects: [
-    {
-      placeholder: {
-        options: { name: "title", type: "title", x: 0.5, y: 0.3, w: 9, h: 0.9, fontSize: 30, bold: true, color: C.background1, valign: "top", margin: 0 },
-        text: "",
-      },
-    },
-  ],
-  slideNumber: { x: 9.2, y: 5.2, w: 0.5, h: 0.3, fontSize: 10, color: C.accent6 },
-});
+const dataUri = (f, mime = "image/png") => `${mime};base64,` + fs.readFileSync(f).toString("base64");
+const BG = { path: `${SK}/assets/slide-background.png` };
 
-const eyebrow = (s, t) =>
-  s.addText(t, { x: 0.5, y: 0.2, w: 9, h: 0.3, fontSize: 12, bold: true, color: C.accent1, charSpacing: 3, isTextBox: true, margin: 0 });
-const caption = (s, t, o = {}) =>
-  s.addText(t, { x: 0.5, y: 4.85, w: 9, h: 0.5, fontSize: 14, color: C.accent2 === undefined ? C.background2 : C.background2, isTextBox: true, margin: 0, ...o });
-const fs = require("fs");
-const dataUri = (f) => "data:image/png;base64," + fs.readFileSync(f).toString("base64");
-const poster = (s, name, mp4) =>
-  s.addMedia({ type: "video", path: `${REPO}/out/${mp4}`, cover: dataUri(`${REPO}/slides/poster-${name}.png`), x: 1.5, y: 1.35, w: 7, h: 3.1 });
+async function symbol(name, colour, heightPx) {
+  const file = `${SK}/assets/symbols/${colour}/${name}.svg`;
+  const png = await sharp(fs.readFileSync(file), { density: 300 }).resize({ height: heightPx }).png().toBuffer();
+  const meta = await sharp(png).metadata();
+  return { data: "image/png;base64," + png.toString("base64"), w: meta.width, h: meta.height };
+}
 
-// 1 ─ section opener ───────────────────────────────────────────────────────
-pres.addSection({ title: "Case study: Not Another Pizza" });
-let s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Case study: Not Another Pizza" });
-eyebrow(s, "CASE STUDY");
-s.addText("Not Another Pizza: a script for the boring parts, an agent for the judgement", {
-  x: 0.5, y: 1.3, w: 8.6, h: 1.9, fontSize: 34, bold: true, color: C.background1, isTextBox: true, margin: 0, valign: "top",
-});
-s.addText("A real index of 43,000 community meetup groups, and what it took to fix it", {
-  x: 0.5, y: 3.5, w: 8.6, h: 0.8, fontSize: 20, color: C.background2, isTextBox: true, margin: 0, valign: "top",
-});
-s.addNotes(
-`WHERE THIS FITS: insert as a block of nine slides straight after your "Script" slide (slide 9), before "Why not start with a deployable system" (slide 10). It is one worked example of everything slides 5-11 say in the abstract: prompt -> skill -> script -> deployable system.
+const eyebrow = (s, t, y = 100) =>
+  s.addText(`// ${t}`, { x: px(100), y: px(y), w: px(1720), h: px(26), fontFace: MONO, fontSize: pt(18), color: GREEN, charSpacing: 2, isTextBox: true, margin: 0, valign: "top" });
+const headline = (s, t, y = 146, size = 56) =>
+  s.addText(t.toUpperCase(), { x: px(100), y: px(y), w: px(1720), h: px(size * 1.1), fontFace: HEAD, fontSize: pt(size), color: WHITE, isTextBox: true, margin: 0, valign: "top" });
+const body = (s, t, o) =>
+  s.addText(t, { fontFace: SANS, isTextBox: true, margin: 0, valign: "top", color: WHITE, ...o });
+const caption = (s, runs, o) =>
+  s.addText(runs, { fontFace: SANS, fontSize: pt(22), color: MUTED, isTextBox: true, margin: 0, valign: "top", ...o });
+const cover = (name) => dataUri(`${DEMO}/slides/poster-${name}.png`);
 
-THE POINT IN ONE LINE: we used a script wherever the answer was knowable, and an agent only for the one step that needed judgement, and we measured what that cost.
+const NOTES = [
+`Okay. So far I've told you a lot of rules. Prompt, then skill, then script, then a deployable system. That's all a bit abstract, so here's a real one.
 
-BACKGROUND: search.notanother.pizza (the project you credit on slide 13) indexes community meetup groups from Meetup and Luma. Hugh Evans built it. We found that most of the groups it knew about had never actually been scraped.
+Hugh built this thing called Not Another Pizza. It's a search index of community meetups, tens of thousands of them. And we used it to try out my whole theory: script the boring bits, and only bring in an agent for the one bit that needs a brain.
 
-TIMING: about 1.5 minutes per slide, so roughly 12-14 minutes for the block. If you are short on time, cut slides 3 and 5 (the two short script videos) and keep 2, 4, 6 and 8.
+Nine slides, about twelve minutes. If I'm running long, I'll skip the two little script videos.
 
-IF EMBEDDED VIDEO DOES NOT SURVIVE THE IMPORT into Google Slides: upload the three MP4s (01_backlog, 02_agent_triage, 03_queue) to Drive and use Insert > Video > Google Drive on the slide.`);
+[Fits: straight after the Script slide, before "Skip the line". If your running order changes, it works anywhere after the prompt, skill, script idea has landed. If the videos don't play after import, upload the three mp4s to Drive and use Insert, Video, Google Drive.]`,
 
-// 2 ─ the problem ───────────────────────────────────────────────────────────
-s = pres.addSlide({ masterName: "CONTENT_TITLE", sectionTitle: "Case study: Not Another Pizza" });
-s.addText("64% of the index was missing", { placeholder: "title" });
-s.addText("64%", { x: 0.5, y: 1.4, w: 4.2, h: 1.5, fontSize: 96, bold: true, color: C.accent1, isTextBox: true, margin: 0, valign: "middle" });
-s.addText("27,981 of 43,425 listed groups had never been scraped, so searches could not find them.", {
-  x: 0.5, y: 3.0, w: 4.2, h: 1.3, fontSize: 18, color: C.background1, isTextBox: true, margin: 0, valign: "top",
-});
-s.addImage({ path: `${REPO}/out/before-search-1.png`, x: 5.0, y: 1.45, w: 4.5, h: 2.81, shadow: { type: "outer", color: "000000", opacity: 0.4, blur: 8, offset: 3, angle: 90 } });
-s.addText("Before: 15,442 groups indexed. 'kafka' found 13.", { x: 5.0, y: 4.4, w: 4.5, h: 0.5, fontSize: 14, color: C.background2, isTextBox: true, margin: 0 });
-s.addNotes(
-`WHERE THIS FITS: this is your "You need data" idea (slide 12) made concrete, so it can also sit directly before slide 12 if you prefer to tell it in two parts.
+`Here's the bit nobody noticed. The index thought it knew about forty three thousand groups. It had actually scraped fifteen. Sixty four percent of them had never been looked at.
 
-WHAT TO SAY: the index lists 43,425 groups, but only 15,442 were actually in it. The rest were found by discovery but never scraped. Nobody noticed because every search still returned something.
+And you'd never know. Every search still gives you something back. It looks fine. That's the "you don't know what you're missing" slide from earlier, except now it's real.
 
-WHY IT MATTERS FOR YOUR TALK: this is the "you don't know what you're missing" point from your Continuous Iteration Trap slide (slide 4). Context is defined by data, and here the data was silently incomplete. A model sitting on top of this would have confidently answered from 36% of the picture.
+Imagine putting a model on top of that. It would answer you with total confidence from about a third of the picture.
 
-THE SCREENSHOT is the live site before the fix: 15,442 groups and 13 results for "kafka".
+[Fits: this is the "you'll need a datastore" point in real life. Numbers are from the 7th of October. The screenshot is the live site before the fix: 15,442 groups, and "kafka" finds 13.]`,
 
-CAUTION: this number is as of 7 October 2026. The index has since grown, which slides 7 and 8 show.`);
+`So how do we find the gap? Do we ask a model? No. It's two lists. You take the groups we know about, you take what's in the index, and you subtract one from the other.
 
-// 3 ─ script finds the gap ──────────────────────────────────────────────────
-s = pres.addSlide({ masterName: "CONTENT_TITLE", sectionTitle: "Case study: Not Another Pizza" });
-s.addText("A script found the gap: 0.1s, 0 tokens", { placeholder: "title" });
-poster(s, "01_backlog", "01_backlog.mp4");
-caption(s, "Compare the group list with the index. No model needed.");
-s.addNotes(
-`WHERE THIS FITS: this is your "Script" slide (slide 9) with a real example, and it answers your slide 8 question, "Is this a problem that AI needs to architect on a daily?" No.
+A tenth of a second. Zero tokens. And it gives you the same answer on the thousandth run.
 
-VIDEO (3 seconds, silent): 01_backlog.mp4. It prints: 43,425 listed, 15,442 in the index, 27,981 never scraped (64%), tokens used 0, wall clock 0.11s.
+Which is the answer to my "why can't I just ask?" slide. You can. You really shouldn't.
 
-WHAT TO SAY: "Yesterday's solution is not always today's best solution. We could have asked a model 'which groups are missing?' and paid for it every time. A set difference between two lists answers it in a tenth of a second, for free, every time, and it is the same answer on the thousandth run."
+[Video is three seconds and silent. Read the numbers out loud: 43,425 listed, 15,442 in the index, 27,981 never scraped, tokens used zero. Fits right after your "Why can't I just ask" slide, or alongside Script.]`,
 
-LINK TO YOUR ARC: prompt -> skill -> script. This is the script end. The cost of this step does not grow with how often you run it, which matters when you show the cost-by-cadence table on slide 6 of this block.
+`Now here's where I'd actually pay for an agent. We've got twenty eight thousand missing groups. Which do we scrape first? Is this a React Native community or a book club? That's a judgement call. A script can't make it.
 
-IF THE VIDEO DOES NOT PLAY: it is a 3-second terminal recording; read the four numbers out instead.`);
+So we gave an agent exactly two tools. Look at a group. Write down a priority. That's it. It can't scrape, it can't write to the database, it can't touch the queue.
 
-// 4 ─ agent for judgement ───────────────────────────────────────────────────
-s = pres.addSlide({ masterName: "CONTENT_TITLE", sectionTitle: "Case study: Not Another Pizza" });
-s.addText("Where an agent earns its keep", { placeholder: "title" });
-poster(s, "02_agent_triage", "02_agent_triage.mp4");
-caption(s, "25 groups triaged for $0.07. Two tools, one job, read-only.");
-s.addNotes(
-`WHERE THIS FITS: after "Script", as the one place an agent is justified. It also lands your slide 6 and 7 contrast (prompt engineering vs skill engineering): this agent has a narrow brief and two tools, not an open-ended prompt.
+Watch the counter. That's the stove. Twenty five groups, seven cents. About a third of a cent a group.
 
-VIDEO (53 seconds, silent): 02_agent_triage.mp4. For each of 25 never-scraped groups the agent looks at the group's public page and labels it priority 1 (active tech/developer/data community), 2 (normal) or 3 (hobby/social/dormant), with a one-line reason. A running cost counter ticks up on the right. It finishes at 45,860 input and 5,522 output tokens, $0.0735, about $0.003 a group.
+Four of them came out priority one. And I'll be straight with you: nobody has checked whether those picks are right. They're examples, not a result.
 
-WHAT TO SAY: "This is the only step that needs judgement: is this group worth scraping before the others? Everything around it is a script. The agent can't scrape, write to the database or change the queue. It only recommends."
+[Video is fifty three seconds, silent. Fits with the "Don't leave the stove on" and "Continuous Iteration Trap" slides. Model is Claude Haiku 4.5 through the Aiven AI gateway, which meters usage per key.]`,
 
-LINK TO YOUR SLIDES 3-4: this is how you know what you're spending. The counter is the point, not the labels.
+`And then we go straight back to a script. The agent hands over a list. A script turns that list into a queue and moves the good ones to the front.
 
-RESULT: 4 of 25 came out priority 1 (an AI community, a React Native community, a SharePoint developer group, a tech meetup), 4 priority 2, 17 priority 3.
+The agent decides. Code does the work. If the agent's wrong, the worst thing that happens is a group gets scraped a bit later. That's your "enough access to do the job and no more" slide, just out in the wild.
 
-IMPORTANT, SAY THIS OUT LOUD: we measured cost, not quality. Nobody has checked whether those four picks are right. Treat them as examples, not as a result. (The last slide of this block says it again.)
+[Fits with the Access slide in the governance section. This is the easiest one to cut if you're short on time. The first script video already makes the point.]`,
 
-MODEL AND GATEWAY: Claude Haiku 4.5, called through the Aiven AI gateway so usage is metered per key.`);
+`Remember on the iteration trap slide I said: run it once, run it weekly, run it a thousand times? Here's that table.
 
-// 5 ─ script acts ───────────────────────────────────────────────────────────
-s = pres.addSlide({ masterName: "CONTENT_TITLE", sectionTitle: "Case study: Not Another Pizza" });
-s.addText("Then a script acts on the answer", { placeholder: "title" });
-poster(s, "03_queue", "03_queue.mp4");
-caption(s, "The agent decides. Code does the work. 4 of 25 moved to the front.");
-s.addNotes(
-`WHERE THIS FITS: still on your "Script" slide (slide 9). It shows the boundary between the agent and the system around it.
+The script costs nothing. Every time. The agent is seven cents for twenty five groups. A thousand runs of that is about seventy four dollars. Triaging the whole backlog is about eighty two.
 
-VIDEO (3 seconds, silent): 03_queue.mp4. It reads the agent's output and moves the four priority-1 groups to the front of the 27,981-group queue.
+So it's not really agent versus script. It's: which step actually needs to think, and how often are you going to ask it to?
 
-WHAT TO SAY: "The agent returned a list. A script, not the agent, turned that list into a queue. That is deliberate: the part that has to be reliable is deterministic code, and the part that needs a human-like judgement is the model."
+[Honest caveats: this is list price, from a twenty five group sample, stretched out. The Aiven AI gateway shows the real metered cost per key, so swap that number in if it's different.]`,
 
-LINK TO YOUR GOVERNANCE SLIDES (22-26): Access means "enough to do the exact job and no more". The agent has two tools and no write access. If it is wrong, the worst case is a group scraped a little later.
+`Fixing the actual bug was boring. The scraper was working through an old list in file order, and it never got to the new groups. So we changed it to ask the database what it already had, do the unseen ones first, then the stalest.
 
-CAN BE CUT if you are short of time. Slide 3's video already makes the script point.`);
+We put it on an Aiven App, next to Aiven Postgres, and left it running. Seventeen thousand groups to forty two thousand in a day. About eleven hundred an hour, dead steady.
 
-// 6 ─ cost by cadence ───────────────────────────────────────────────────────
-s = pres.addSlide({ masterName: "CONTENT_TITLE", sectionTitle: "Case study: Not Another Pizza" });
-s.addText("What it costs, by how often you ask", { placeholder: "title" });
-const hdr = (t) => ({ text: t, options: { bold: true, color: C.background1, fill: { color: C.accent6 }, fontSize: 16 } });
-const cell = (t, o = {}) => ({ text: t, options: { color: C.background1, fontSize: 16, ...o } });
-s.addTable(
-  [
-    [hdr("Cadence"), hdr("Agent triage"), hdr("Script")],
-    [cell("Once, 25 groups"), cell("$0.07"), cell("$0")],
-    [cell("1,000 runs of 25"), cell("about $74"), cell("$0")],
-    [cell("Whole backlog, 27,981 groups"), cell("about $82"), cell("$0")],
-  ],
-  { x: 0.5, y: 1.5, w: 9, colW: [4.4, 2.3, 2.3], rowH: 0.55, border: { type: "solid", pt: 1, color: C.accent6 }, valign: "middle" }
-);
-s.addText("Haiku 4.5 list price, measured on 25 groups and extrapolated. The Aiven gateway meters the exact figure per key.", {
-  x: 0.5, y: 4.2, w: 9, h: 0.7, fontSize: 14, color: C.background2, isTextBox: true, margin: 0, valign: "top",
-});
-s.addNotes(
-`WHERE THIS FITS: this is the "Cost? Run once, run weekly, 1000 runs" prompt on your Continuous Iteration Trap slide (slide 4). Put it right after or in place of that slide's placeholder.
+That's the whole point of the deployable system slide. The state lives in the database, so a restart doesn't lose your place.
 
-THE NUMBERS: measured on a real run of 25 groups, 45,860 input and 5,522 output tokens, $0.0735 at Claude Haiku 4.5 list price. $0.0735 / 25 = $0.00294 a group. 1,000 runs of 25 groups = about $74. Triaging all 27,981 groups once = about $82.
+[Fits with Deployable System and Aiven Runtimes. If you want proof on the slide, add a screenshot of the Aiven console showing the batch app logs, something like "n of 43,419". The first bar is partial because the scraper started halfway through that hour.]`,
 
-WHAT TO SAY: "The script costs nothing at any cadence. The agent's cost scales with how often you ask it to think. So the question is not 'agent or script' but 'which step actually needs thinking', and how often do you run it."
+`Same site. Same search. Same code. The only thing that changed is the data. "Data engineering" went from ten results to thirty three.
 
-CAVEATS: this is list price and a 25-group sample, extrapolated. The Aiven AI gateway shows the real metered cost per access key; if that differs, use the console figure.
+Not everything grew, mind. "Python and London" gave one result before and one after. More data doesn't mean more of everything. But it's the difference between a search that's guessing and one that actually knows.
 
-LINK TO YOUR SLIDE 8: "AI will burn your token budget down". This is the counter-example: a bounded agent with a known cost.`);
+Which is why I keep going on about data.
 
-// 7 ─ deployed & backfilled ─────────────────────────────────────────────────
-s = pres.addSlide({ masterName: "CONTENT_TITLE", sectionTitle: "Case study: Not Another Pizza" });
-s.addText("17k to 42k groups in 24 hours", { placeholder: "title" });
-const hours = ["11","12","13","14","15","16","17","18","19","20","21","22","23","00","01","02","03","04","05","06","07","08","09"];
-const vals = [470,933,970,916,952,1200,1172,1133,1138,1113,1153,1152,1160,1222,1279,1127,1033,1133,1180,1152,1145,1173,1120];
-s.addChart(pres.charts.BAR, [{ name: "New groups per hour", labels: hours, values: vals }], {
-  x: 0.5, y: 1.4, w: 9, h: 3.3, barDir: "col",
-  chartColors: [THEME.colors.accent1],
-  catAxisLabelColor: THEME.colors.lt2, valAxisLabelColor: THEME.colors.lt2,
-  catAxisLabelFontFace: "+mn-lt", valAxisLabelFontFace: "+mn-lt", catAxisLabelFontSize: 12, valAxisLabelFontSize: 12,
-  valGridLine: { color: THEME.colors.accent6, size: 0.5 }, catGridLine: { style: "none" },
-  showLegend: false, showTitle: false, valAxisMaxVal: 1400, valAxisMajorUnit: 400,
-  showCatAxisTitle: true, catAxisTitle: "hour (UTC), 7 Oct 11:00 to 8 Oct 09:00", catAxisTitleColor: THEME.colors.lt2, catAxisTitleFontSize: 12,
-});
-s.addText("New groups scraped per hour after the fix: steady at about 1,150.", { x: 0.5, y: 4.8, w: 9, h: 0.4, fontSize: 14, color: C.background2, isTextBox: true, margin: 0 });
-s.addNotes(
-`WHERE THIS FITS: your "Why not start with a deployable system instead?" and "Deployable System" slides (10 and 11), and the "Aiven Runtimes" idea. Put it directly after slide 11.
+[Fits right before the Shoutouts slide, so the thank you to Hugh Evans and search.notanother.pizza lands as the payoff. Figures: groups 15,442 to 40,550, events 829,236 to 2,029,657. The site updates once a day, so it lags the database a little.]`,
 
-THE STORY: the scraper runs as an Aiven App writing to Aiven Postgres. It never reached the missing groups: the app was building from a stale branch whose group list predated about 26,000 later-discovered groups, and it worked through that list in file order. The fix was to order by what is already in the database (never-scraped first, then stalest) and to ship the full list. Once deployed it ran at a steady 1,150 groups an hour: the database went from about 17,000 to 42,068 groups in 24 hours.
+`Last one of the block, and it's the honest one. We measured what the agent cost. We did not measure whether it was right.
 
-WHAT TO SAY: "The thing that fixed it was boring: a script that reads state from the database instead of from a file in the container. That is what a deployable system gives you: state that survives restarts."
+Those four priority one groups are examples, not a result. The cost is a twenty five group sample at list price, stretched out. And our first fix for the Luma scraper was wrong. It read past events from a page that actually shows upcoming ones, so it labelled future events as past. It looked right until we checked the dates.
 
-TO ADD BY HAND (not in this file): a screenshot of the Aiven console showing the batch app's logs with '[n/43419]' on slide 10 or 11. It proves the deployment and the scale.
+So: measure cost, measure quality. Otherwise you pay for retries, and retries are where the money goes.
 
-ACCURACY: the first bar (11:00) is partial because the scraper started around 11:30. The figures are from the production database on 8 October.`);
-
-// 8 ─ before / after ────────────────────────────────────────────────────────
-s = pres.addSlide({ masterName: "CONTENT_TITLE", sectionTitle: "Case study: Not Another Pizza" });
-s.addText("Same search, 2.6x more groups", { placeholder: "title" });
-s.addImage({ path: `${REPO}/out/before-search-3.png`, x: 0.5, y: 1.5, w: 4.3, h: 2.69, shadow: { type: "outer", color: "000000", opacity: 0.4, blur: 8, offset: 3, angle: 90 } });
-s.addImage({ path: `${REPO}/out/after-search-3.png`, x: 5.2, y: 1.5, w: 4.3, h: 2.69, shadow: { type: "outer", color: "000000", opacity: 0.4, blur: 8, offset: 3, angle: 90 } });
-s.addText("Before: 15,442 groups. 'data engineering': 10 results", { x: 0.5, y: 4.3, w: 4.3, h: 0.7, fontSize: 14, color: C.background2, isTextBox: true, margin: 0, valign: "top" });
-s.addText("After: 40,550 groups. 'data engineering': 33 results", { x: 5.2, y: 4.3, w: 4.3, h: 0.7, fontSize: 14, color: C.accent1, bold: true, isTextBox: true, margin: 0, valign: "top" });
-s.addNotes(
-`WHERE THIS FITS: slide 13, your shout-out to notanother.pizza and Hugh Evans. This slide is the payoff for that credit.
-
-THE NUMBERS (live site, before 6-7 October, after 8 October): groups 15,442 -> 40,550; events 829,236 -> 2,029,657. The search "data engineering" went from 10 to 33 results; "kafka" from 13 to 20. The site's displayed counts differ slightly from the database (43,414 groups) because it is rendered once a day.
-
-HONEST NOTE: not every search grew. "python AND london" returned 1 result both before and after. More data does not mean more of every answer.
-
-WHAT TO SAY: "Same site, same query, same code. The only change was the data behind it. That is your 'you need data' point, and it is why the governance slides matter: structure, visibility, access and context only work if the data is actually there."
-
-SHOUT-OUT: Hugh Evans built and maintains this project; search.notanother.pizza.`);
-
-// 9 ─ what we did not measure ───────────────────────────────────────────────
-s = pres.addSlide({ masterName: "CONTENT_TITLE", sectionTitle: "Case study: Not Another Pizza" });
-s.addText("What we did not measure", { placeholder: "title" });
-s.addText(
-  [
-    { text: "Quality of the agent's picks: unchecked", options: { bullet: true, breakLine: true } },
-    { text: "Cost: a 25-group sample at list price, extrapolated", options: { bullet: true, breakLine: true } },
-    { text: "Our first fix for the Luma scraper was wrong. We found out by checking dates, not labels", options: { bullet: true } },
-  ],
-  { x: 0.5, y: 1.5, w: 9, h: 2.8, fontSize: 22, color: C.background1, isTextBox: true, margin: 0, valign: "top", paraSpaceAfter: 14 }
-);
-s.addText("Measure cost and quality, or you will pay for retries.", { x: 0.5, y: 4.5, w: 9, h: 0.5, fontSize: 18, bold: true, color: C.accent2, isTextBox: true, margin: 0 });
-s.addNotes(
-`WHERE THIS FITS: close the block with this, then continue to your "How can companies leverage AI post-hype?" slide (14). It is also the honest version of your slide 3 ("Are you actually seeing ROI?").
-
-THE THREE THINGS:
-1. We measured what the agent cost, not whether its priority-1 picks are right. A proper check would compare its labels against a human-labelled sample.
-2. The cost figures are a 25-group run at Claude Haiku 4.5 list price, extrapolated to the full backlog. Use the Aiven gateway's per-key figure for the exact number.
-3. We made a mistake and caught it. The first Luma fix read 'past events' from a page that actually returns upcoming events, so it would have labelled future events as past. The label looked right; the dates were in the future. The corrected version uses Luma's own calendar API and refuses to label an event past unless its start is in the past. 746 of 765 Luma groups now have real past events, 37,233 in total, and none has a future date.
-
-WHAT TO SAY: "Cost and quality both have to be measured. Cutting cost without measuring quality just buys you retries, and retries are the most expensive tokens."`);
+[Then straight into the "how can companies leverage AI post-hype" section. Luma facts if asked: 746 of 765 Luma groups now have real past events, 37,233 in total, none with a future date.]`,
+];
 
 (async () => {
+  const brace = await symbol("Curly brace right", "Teal", 1160);
+  const slash = await symbol("Slash", "Purple", 440);
+
+  // 1 ─ section title (reference layout: plain bg, symbols fixed) ─────────────
+  let s = pres.addSlide();
+  s.background = { color: NEAR };
+  s.addImage({ data: brace.data, x: px(1920 + 100 - brace.w), y: px(-40), w: px(brace.w), h: px(brace.h) });
+  s.addImage({ data: slash.data, x: px(200), y: px(1080 + 80 - slash.h), w: px(slash.w), h: px(slash.h) });
+  eyebrow(s, "CASE STUDY", 379);
+  s.addText("NOT ANOTHER\nPIZZA", { x: px(100), y: px(425), w: px(1100), h: px(160), fontFace: HEAD, fontSize: pt(80), color: WHITE, isTextBox: true, margin: 0, valign: "top", lineSpacingMultiple: 1.0 });
+  body(s, "A script for the boring parts.\nAn agent for the judgement.", { x: px(100), y: px(617), w: px(1000), h: px(90), fontSize: pt(30) });
+  s.addNotes(NOTES[0]);
+
+  // 2 ─ the problem ──────────────────────────────────────────────────────────
+  s = pres.addSlide(); s.background = BG;
+  eyebrow(s, "THE PROBLEM"); headline(s, "64% of the index was missing");
+  s.addText("64%", { x: px(100), y: px(250), w: px(700), h: px(216), fontFace: HEAD, fontSize: pt(240), color: GREEN, isTextBox: true, margin: 0, valign: "top" });
+  body(s, "27,981 of 43,425 listed groups had never been scraped, so searches could not find them.", { x: px(100), y: px(498), w: px(700), h: px(150), fontSize: pt(30) });
+  s.addImage({ path: `${DEMO}/out/before-search-1.png`, x: px(880), y: px(250), w: px(900), h: px(562) });
+  caption(s, [{ text: "Before: ", options: { bold: true, color: WHITE } }, { text: '15,442 groups indexed. "kafka" found 13.' }], { x: px(880), y: px(832), w: px(900), h: px(36) });
+  s.addNotes(NOTES[1]);
+
+  // 3-5 ─ video slides ───────────────────────────────────────────────────────
+  const vid = (n, eye, head, name, mp4, num, numPx, text, cap) => {
+    const sl = pres.addSlide(); sl.background = BG;
+    eyebrow(sl, eye); headline(sl, head);
+    sl.addMedia({ type: "video", path: `${DEMO}/out/${mp4}`, cover: cover(name), x: px(100), y: px(250), w: px(1040), h: px(585) });
+    caption(sl, cap, { x: px(100), y: px(855), w: px(1040), h: px(36) });
+    sl.addText(num, { x: px(1220), y: px(250), w: px(600), h: px(numPx * 0.95), fontFace: HEAD, fontSize: pt(numPx), color: GREEN, isTextBox: true, margin: 0, valign: "top" });
+    body(sl, text, { x: px(1220), y: px(250 + numPx * 0.9 + 32), w: px(600), h: px(200), fontSize: pt(28) });
+    sl.addNotes(NOTES[n]);
+  };
+  vid(2, "THE SCRIPT", "A script found the gap", "01_backlog", "01_backlog.mp4", "0.1S", 150, "0 tokens. Same answer on the thousandth run.", "Compare the group list with the index. No model needed.");
+  vid(3, "THE AGENT", "Where an agent earns its keep", "02_agent_triage", "02_agent_triage.mp4", "$0.07", 150, "25 groups triaged. Two tools, one job, read-only.", "The one step that needs judgement: which groups first?");
+  vid(4, "THE HAND-OFF", "Then a script acts on the answer", "03_queue", "03_queue.mp4", "4 OF 25", 110, "moved to the front of the queue. The agent decides. Code does the work.", "The agent returns a list. A script builds the queue.");
+
+  // 6 ─ cost table ───────────────────────────────────────────────────────────
+  s = pres.addSlide(); s.background = BG;
+  eyebrow(s, "THE COST"); headline(s, "What it costs, by how often you ask");
+  const border = { type: "solid", pt: 0.75, color: DIV };
+  const th = (t) => ({ text: t.toUpperCase(), options: { fontFace: MONO, fontSize: pt(18), color: GREEN, fill: { color: ROW }, border, margin: [0.14, 0.17, 0.14, 0.17] } });
+  const td = (t, first) => ({ text: t, options: { fontFace: SANS, bold: !!first, fontSize: pt(20), color: first ? WHITE : SOFT, fill: { color: ROW }, border, margin: [0.14, 0.17, 0.14, 0.17] } });
+  s.addTable(
+    [
+      [th("Cadence"), th("Agent triage"), th("Script")],
+      [td("Once, 25 groups", true), td("$0.07"), td("$0")],
+      [td("1,000 runs of 25", true), td("about $74"), td("$0")],
+      [td("Whole backlog, 27,981 groups", true), td("about $82"), td("$0")],
+    ],
+    { x: px(100), y: px(250), w: px(1720), colW: [px(860), px(430), px(430)], rowH: px(70), valign: "middle" }
+  );
+  caption(s, "Haiku 4.5 list price, measured on 25 groups and extrapolated. The Aiven AI gateway meters the exact figure per key.", { x: px(100), y: px(580), w: px(1720), h: px(36) });
+  s.addNotes(NOTES[5]);
+
+  // 7 ─ native chart ─────────────────────────────────────────────────────────
+  s = pres.addSlide(); s.background = BG;
+  eyebrow(s, "DEPLOYED ON AIVEN"); headline(s, "17K to 42K groups in 24 hours");
+  const hours = ["11","12","13","14","15","16","17","18","19","20","21","22","23","00","01","02","03","04","05","06","07","08","09"];
+  const vals = [470,933,970,916,952,1200,1172,1133,1138,1113,1153,1152,1160,1222,1279,1127,1033,1133,1180,1152,1145,1173,1120];
+  s.addChart(pres.charts.BAR, [{ name: "New groups per hour", labels: hours, values: vals }], {
+    x: px(100), y: px(226), w: px(1720), h: px(520), barDir: "col", barGapWidthPct: 25,
+    chartColors: [GREEN], showLegend: false, showTitle: false,
+    catAxisLabelColor: MUTED, valAxisLabelColor: MUTED, catAxisLabelFontFace: MONO, valAxisLabelFontFace: MONO,
+    catAxisLabelFontSize: 12, valAxisLabelFontSize: 12,
+    valGridLine: { color: DIV, size: 0.75 }, catGridLine: { style: "none" },
+    valAxisMinVal: 0, valAxisMaxVal: 1400, valAxisMajorUnit: 400, valAxisLabelFormatCode: "#,##0",
+  });
+  caption(s, "New groups scraped per hour (UTC), 7 Oct 11:00 to 8 Oct 09:00. Steady at about 1,150 an hour.", { x: px(100), y: px(758), w: px(1720), h: px(36) });
+  s.addNotes(NOTES[6]);
+
+  // 8 ─ before / after ───────────────────────────────────────────────────────
+  s = pres.addSlide(); s.background = BG;
+  eyebrow(s, "THE RESULT"); headline(s, "Same search, 2.6x more groups");
+  s.addImage({ path: `${DEMO}/out/before-search-3.png`, x: px(100), y: px(250), w: px(830), h: px(519) });
+  s.addImage({ path: `${DEMO}/out/after-search-3.png`, x: px(990), y: px(250), w: px(830), h: px(519) });
+  caption(s, [{ text: "Before: ", options: { bold: true, color: WHITE } }, { text: '15,442 groups. "data engineering": 10 results.' }], { x: px(100), y: px(789), w: px(830), h: px(60) });
+  caption(s, [{ text: "After: ", options: { bold: true, color: GREEN } }, { text: '40,550 groups. "data engineering": 33 results.', options: { color: GREEN } }], { x: px(990), y: px(789), w: px(830), h: px(60) });
+  s.addNotes(NOTES[7]);
+
+  // 9 ─ list ─────────────────────────────────────────────────────────────────
+  s = pres.addSlide(); s.background = BG;
+  eyebrow(s, "THE HONEST BIT"); headline(s, "What we did not measure");
+  const rows = [
+    ["Quality of the agent's picks", "Unchecked. Treat the four priority 1 groups as examples, not a result."],
+    ["Cost", "A 25-group sample at list price, extrapolated to the backlog."],
+    ["Our first Luma fix", "It was wrong. We caught it by checking dates, not labels."],
+  ];
+  rows.forEach(([t, b], i) => {
+    const y = 250 + i * 126;
+    s.addShape(pres.ShapeType.rect, { x: px(100), y: px(y), w: px(1720), h: px(110), fill: { color: ROW }, line: { type: "none" } });
+    s.addShape(pres.ShapeType.ellipse, { x: px(132), y: px(y + 34), w: px(10), h: px(10), fill: { color: GREEN }, line: { type: "none" } });
+    body(s, t, { x: px(244), y: px(y + 24), w: px(1500), h: px(32), fontSize: pt(24), bold: true });
+    s.addText(b, { x: px(244), y: px(y + 60), w: px(1500), h: px(28), fontFace: SANS, fontSize: pt(18), color: MUTED, isTextBox: true, margin: 0, valign: "top" });
+  });
+  body(s, "Measure cost + quality, or pay for retries.", { x: px(100), y: px(660), w: px(1720), h: px(44), fontSize: pt(30), bold: true });
+  s.addNotes(NOTES[8]);
+
   await pres.writeFile({ fileName: OUT });
-  await applyTheme(OUT, THEME);
   console.log("wrote", OUT);
 })();
